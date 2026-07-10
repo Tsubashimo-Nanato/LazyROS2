@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify signed tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      target_sha: ${{ steps.tag.outputs.target_sha }}
+    steps:
+      - name: Validate tag signature and immutability
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.sha')
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type')
+          if [[ "$tag_type" != tag ]]; then
+              printf 'release tag must be annotated\n' >&2
+              exit 1
+          fi
+          verified=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.verification.verified')
+          if [[ "$verified" != true ]]; then
+              printf 'GitHub did not verify the release tag signature\n' >&2
+              exit 1
+          fi
+          target_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.type')
+          target_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.sha')
+          if [[ "$target_type" != commit || "$target_sha" != "$GITHUB_SHA" ]]; then
+              printf 'verified tag target %s does not match event commit %s\n' "$target_sha" "$GITHUB_SHA" >&2
+              exit 1
+          fi
+          printf 'target_sha=%s\n' "$target_sha" >>"$GITHUB_OUTPUT"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              printf 'release %s already exists; assets will not be overwritten\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+          fi
+
+  build:
+    name: Build and smoke-test archive
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERIFIED_SHA: ${{ needs.verify.outputs.target_sha }}
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.verify.outputs.target_sha }}
+
+      - name: Install release syntax dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zsh
+
+      - name: Validate tag and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' <VERSION)
+          test "$GITHUB_REF_NAME" = "v${version}"
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+          test -z "$(git status --short)"
+          bash -n install.sh bin/lazy shell/*.bash tests/ros_smoke.sh
+          zsh -n shell/*.zsh
+          python3 -m compileall -q src tests
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build deterministic release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' <VERSION)
+          archive="lazyros2-${version}.tar.gz"
+          root="lazyros2-${version}"
+          epoch=$(git show -s --format=%ct "$VERIFIED_SHA")
+          mkdir -p "dist/staging/${root}"
+          git archive "$VERIFIED_SHA" | tar -x -C "dist/staging/${root}"
+          printf '%s\n' "$GITHUB_REF_NAME" >"dist/staging/${root}/SOURCE_REF"
+          printf '%s\n' "$VERIFIED_SHA" >"dist/staging/${root}/SOURCE_COMMIT"
+          tar \
+              --sort=name \
+              --mtime="@${epoch}" \
+              --owner=0 \
+              --group=0 \
+              --numeric-owner \
+              -C dist/staging \
+              -cf - "$root" | gzip -n >"dist/${archive}"
+          (cd dist && sha256sum "$archive" >SHA256SUMS && sha256sum --check SHA256SUMS)
+
+      - name: Install and uninstall the exact archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' <VERSION)
+          test_root=$(mktemp -d)
+          trap 'rm -rf -- "$test_root"' EXIT
+          mkdir -p "$test_root/extract" "$test_root/home" "$test_root/runtime"
+          chmod 700 "$test_root/runtime"
+          tar -xzf "dist/lazyros2-${version}.tar.gz" -C "$test_root/extract"
+          touch "$test_root/sentinel"
+          export HOME="$test_root/home"
+          export SHELL=/bin/bash
+          export XDG_CACHE_HOME="$test_root/cache"
+          export XDG_CONFIG_HOME="$test_root/config"
+          export XDG_RUNTIME_DIR="$test_root/runtime"
+          export XDG_STATE_HOME="$test_root/state"
+          printf '%s\n' '# user rc sentinel' >"$HOME/.bashrc"
+          sh "$test_root/extract/lazyros2-${version}/install.sh"
+          test "$("$HOME/.local/bin/lazy" --version)" = "lazy ${version}"
+          grep -Fx '# >>> LazyROS2 >>>' "$HOME/.bashrc"
+          sh "$HOME/.local/lib/lazyros2/current/install.sh" --uninstall
+          grep -Fx '# user rc sentinel' "$HOME/.bashrc"
+          ! grep -F 'LazyROS2 >>>' "$HOME/.bashrc"
+          mkdir -p "$XDG_CONFIG_HOME/lazyros2"
+          touch "$XDG_CONFIG_HOME/lazyros2/state"
+          sh "$test_root/extract/lazyros2-${version}/install.sh" --uninstall --purge --yes
+          test -f "$test_root/sentinel"
+          test ! -e "$HOME/.local/bin/lazy"
+          test ! -e "$XDG_CONFIG_HOME/lazyros2"
+
+      - name: Upload verified release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: |
+            dist/lazyros2-*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Publish immutable assets
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Recheck archive checksum
+        run: cd dist && sha256sum --check SHA256SUMS
+
+      - name: Attest release archive
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/lazyros2-*.tar.gz
+
+      - name: Publish release without replacing existing assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" \
+              "dist/lazyros2-${version}.tar.gz" \
+              "dist/SHA256SUMS" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "LazyROS2 ${version}" \
+              --generate-notes
