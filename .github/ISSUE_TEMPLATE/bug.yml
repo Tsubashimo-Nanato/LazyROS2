@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible LazyROS2 failure.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include passwords, tokens, SSH keys, or complete environment snapshots.
+  - type: input
+    id: version
+    attributes:
+      label: LazyROS2 version
+      placeholder: Output of lazy --version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and ROS 2 distribution
+      placeholder: Ubuntu 24.04 x86_64, ROS 2 Jazzy, Bash 5.2
+    validations:
+      required: true
+  - type: dropdown
+    id: entrypoint
+    attributes:
+      label: Invocation mode
+      options:
+        - Interactive control shell
+        - Non-interactive CLI
+        - Independent task window
+        - Installer or uninstaller
+        - Completion
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include a disposable workspace layout and literal argv where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Actual and expected result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include relevant status output and exit codes, with secrets removed.

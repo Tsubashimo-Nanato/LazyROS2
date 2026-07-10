@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  required:
+    name: required
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate repository baseline
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import tomllib
+
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          if re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version) is None:
+              raise SystemExit("VERSION is not a stable semantic version")
+          metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          if metadata["project"].get("dynamic") != ["version"]:
+              raise SystemExit("pyproject.toml must read the version dynamically")
+          if metadata.get("tool", {}).get("setuptools", {}).get("dynamic", {}).get("version") != {"file": ["VERSION"]}:
+              raise SystemExit("build metadata must read its version from VERSION")
+          if metadata["project"]["license"]["text"] != "AGPL-3.0-or-later":
+              raise SystemExit("project license metadata is incorrect")
+          for required in ("README.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "LICENSE"):
+              if not Path(required).is_file():
+                  raise SystemExit(f"missing repository contract: {required}")
+          PY
+
+      - name: Run tests present in this stack layer
+        shell: bash
+        run: |
+          if [[ -d src && -d tests ]]; then
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -p 'test_*.py'
+          fi

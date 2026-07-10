@@ -1,0 +1,41 @@
+name: Workflow proposal
+description: Propose a focused ROS 2 development workflow improvement.
+title: "[Proposal]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: friction
+    attributes:
+      label: Current workflow and friction
+      description: Show the native commands and where copying, discovery, or repetition occurs.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior, not only an implementation idea.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Compatibility and failure boundaries
+      description: Note ROS distributions, shells, workspace shape, GUI needs, and unsafe fallback behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: native_escape
+    attributes:
+      label: Native command escape hatch
+      description: Explain when a user should still call ros2 or colcon directly.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance scenarios
+      description: Include success, empty input, invalid input, and interrupted execution.
+    validations:
+      required: true
