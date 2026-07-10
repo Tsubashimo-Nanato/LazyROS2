@@ -30,6 +30,14 @@ git tag -s "v$version" -m "LazyROS2 $version"
 git push origin "v$version"
 ```
 
+推送 tag 不会自动发布。准备好公开产物后，维护者必须显式启动 release workflow，并传入已经存在的 tag：
+
+```sh
+gh workflow run release.yml -f "tag=v$version"
+```
+
+只创建 tag、不准备 Release 时，到 `git push origin "v$version"` 为止即可。
+
 The release workflow checks that:
 
 - the ref is an annotated tag and GitHub reports its signature as verified;

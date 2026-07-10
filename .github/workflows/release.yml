@@ -1,9 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed v* tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
       target_sha: ${{ steps.tag.outputs.target_sha }}
     steps:
       - name: Validate tag signature and immutability
@@ -21,10 +25,15 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.sha')
-          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type')
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              printf 'release tag must be vMAJOR.MINOR.PATCH: %s\n' "$RELEASE_TAG" >&2
+              exit 1
+          fi
+          tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')
+          tag_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.type')
           if [[ "$tag_type" != tag ]]; then
               printf 'release tag must be annotated\n' >&2
               exit 1
@@ -36,13 +45,20 @@ jobs:
           fi
           target_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.type')
           target_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.sha')
-          if [[ "$target_type" != commit || "$target_sha" != "$GITHUB_SHA" ]]; then
-              printf 'verified tag target %s does not match event commit %s\n' "$target_sha" "$GITHUB_SHA" >&2
+          if [[ "$target_type" != commit ]]; then
+              printf 'verified tag target is not a commit: %s\n' "$target_type" >&2
               exit 1
           fi
+          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
+          relation=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${target_sha}...${default_branch}" --jq '.status')
+          if [[ "$relation" != ahead && "$relation" != identical ]]; then
+              printf 'tag target %s is not reachable from %s\n' "$target_sha" "$default_branch" >&2
+              exit 1
+          fi
+          printf 'release_tag=%s\n' "$RELEASE_TAG" >>"$GITHUB_OUTPUT"
           printf 'target_sha=%s\n' "$target_sha" >>"$GITHUB_OUTPUT"
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              printf 'release %s already exists; assets will not be overwritten\n' "$GITHUB_REF_NAME" >&2
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              printf 'release %s already exists; assets will not be overwritten\n' "$RELEASE_TAG" >&2
               exit 1
           fi
 
@@ -52,6 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
+      RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
       VERIFIED_SHA: ${{ needs.verify.outputs.target_sha }}
     steps:
       - name: Check out tagged commit
@@ -71,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           version=$(tr -d '\r\n' <VERSION)
-          test "$GITHUB_REF_NAME" = "v${version}"
+          test "$RELEASE_TAG" = "v${version}"
           test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
           test -z "$(git status --short)"
           bash -n install.sh bin/lazy shell/*.bash tests/ros_smoke.sh
@@ -89,7 +106,7 @@ jobs:
           epoch=$(git show -s --format=%ct "$VERIFIED_SHA")
           mkdir -p "dist/staging/${root}"
           git archive "$VERIFIED_SHA" | tar -x -C "dist/staging/${root}"
-          printf '%s\n' "$GITHUB_REF_NAME" >"dist/staging/${root}/SOURCE_REF"
+          printf '%s\n' "$RELEASE_TAG" >"dist/staging/${root}/SOURCE_REF"
           printf '%s\n' "$VERIFIED_SHA" >"dist/staging/${root}/SOURCE_COMMIT"
           tar \
               --sort=name \
@@ -144,7 +161,7 @@ jobs:
 
   publish:
     name: Publish immutable assets
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -170,10 +187,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
         run: |
           set -euo pipefail
-          version=${GITHUB_REF_NAME#v}
-          gh release create "$GITHUB_REF_NAME" \
+          version=${RELEASE_TAG#v}
+          gh release create "$RELEASE_TAG" \
               "dist/lazyros2-${version}.tar.gz" \
               "dist/SHA256SUMS" \
               --repo "$GITHUB_REPOSITORY" \

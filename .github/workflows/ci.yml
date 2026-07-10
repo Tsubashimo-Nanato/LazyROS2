@@ -127,7 +127,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends dbus-x11 gnome-terminal xvfb
 
       - name: Launch literal argv under Xvfb and D-Bus
-        run: dbus-run-session -- xvfb-run -a python3 tests/terminal_adapter_smoke.py
+        run: xvfb-run -a dbus-run-session -- python3 tests/terminal_adapter_smoke.py
 
   required:
     name: required
