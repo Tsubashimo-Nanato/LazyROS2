@@ -19,14 +19,14 @@ Protect `v*` tags from update and deletion, and restrict tag creation to the mai
 
 ## Tag and publish
 
-Create a signed annotated tag with the authenticated maintainer identity:
+Create an annotated tag with the authenticated maintainer identity:
 
 ```sh
 version=$(cat VERSION)
 git switch main
 git pull --ff-only
 git status --short
-git tag -s "v$version" -m "LazyROS2 $version"
+git tag -a "v$version" -m "LazyROS2 $version"
 git push origin "v$version"
 ```
 
@@ -40,7 +40,7 @@ gh workflow run release.yml -f "tag=v$version"
 
 The release workflow checks that:
 
-- the ref is an annotated tag and GitHub reports its signature as verified;
+- the ref is an annotated tag rather than a lightweight tag;
 - tag and `VERSION` match;
 - no release with that tag already exists;
 - the archive comes from the tagged commit and excludes local-only files;
