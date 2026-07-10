@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+set -eu
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+app_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
+
+if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' 'lazy: Python 3.10 or newer is required.' >&2
+    exit 127
+fi
+if [ -n "${PYTHONPATH:-}" ]; then
+    export PYTHONPATH="$app_root/src:$PYTHONPATH"
+else
+    export PYTHONPATH="$app_root/src"
+fi
+
+exec python3 -c '
+import sys
+if sys.version_info < (3, 10):
+    print("lazy: Python 3.10 or newer is required.", file=sys.stderr)
+    raise SystemExit(2)
+import runpy
+runpy.run_module("lazyros2", run_name="__main__")
+' "$@"
