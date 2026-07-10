@@ -59,7 +59,7 @@ sh install.sh --allow-downgrade    # 安装较旧版本
 
 同版本且内容哈希一致时，安装器直接返回 no-op。布局、manifest schema 和失败恢复规则见 [安装与卸载设计](docs/install-layout.md)。
 
-## 开始使用
+## 一分钟上手
 
 进入 workspace 根目录再启动控制 shell。目录必须包含 `src/`，或能被 `colcon list` 识别出 package。
 
@@ -68,23 +68,51 @@ cd ~/robot_ws
 lazy
 ```
 
-常用命令：
+进入后可以先按两次 Tab 查看 LazyROS2 命令，再按 package、executable 或 launch 文件的上下文继续补全：
 
-```text
-build [PKG...]              构建全部或指定 package
-build --up-to PKG...        构建 package 及其 workspace 依赖
-test [PKG...]               测试并显示详细 test-result
-run PKG EXEC [-- ARGS...]   运行 executable
-launch PKG FILE [-- ARGS...] 启动 launch 文件
-rviz [CONFIG] [-- ARGS...]  启动 RViz
-jobs                        查看 LazyROS2 任务窗口
-status                      查看 workspace 和工具能力
-refresh                     刷新补全快照
+```console
+[lazy:robot_ws | ros:jazzy] $ build my_robot
+[lazy:robot_ws | ros:jazzy] $ test my_robot
+[lazy:robot_ws | ros:jazzy] $ run my_robot controller -- --ros-args -p rate:=20
+[lazy:robot_ws | ros:jazzy] $ launch my_robot bringup.launch.py
+[lazy:robot_ws | ros:jazzy] $ jobs
+[lazy:robot_ws | ros:jazzy] $ exit
 ```
 
 在控制 shell 中，`run`、`launch`、`rviz` 默认创建独立任务窗口；普通非交互调用（例如 `lazy run ...`）默认在当前前台执行。使用 `--here` 或 `--window` 可以显式选择。完整参数、透传规则和退出码见 [命令参考](docs/commands.md)。
 
-传给 colcon、ROS 2 或 RViz 的底层参数必须放在显式 `--` 后；LazyROS2 移除这个分隔符，其余 argv（包括空格、引号字符、glob、`$()` 和 Unicode）不经 shell 求值地逐项传递。
+如果 `build PKG` 失败且 LazyROS2 确实发现未安装的 workspace 依赖，控制 shell 会列出候选并询问是否改用 `build --up-to PKG` 重试。普通非交互 CLI 不会询问。
+
+### 命令映射
+
+| LazyROS2 | 对应的原生命令 | 说明 |
+| --- | --- | --- |
+| `build` | `colcon build` | 构建全部 package。 |
+| `build PKG...` | `colcon build --packages-select PKG...` | 只构建指定 package。 |
+| `build --up-to PKG...` | `colcon build --packages-up-to PKG...` | 同时构建递归 workspace 依赖。 |
+| `test [PKG...]` | `colcon test [--packages-select PKG...]`，随后 `colcon test-result --verbose` | 测试失败或 test-result 报错都会返回非零。 |
+| `test-result` | `colcon test-result --verbose` | 查看最近一次测试结果。 |
+| `run PKG EXEC` | `ros2 run PKG EXEC` | 控制 shell 默认新任务窗口。 |
+| `launch PKG FILE` | `ros2 launch PKG FILE` | FILE 使用已安装 launch 文件的 basename。 |
+| `rviz [CONFIG]` | `rviz2` 或 `rviz2 -d CONFIG` | 配置文件可省略。 |
+| `jobs` | 无直接映射 | 只列 LazyROS2 创建的任务窗口；shell 原生 job 使用 `builtin jobs`。 |
+| `status` | 无直接映射 | 显示 workspace、ROS 工具、overlay、终端和缓存状态。 |
+| `refresh` | 无直接映射 | 原子刷新补全缓存，失败时保留旧快照。 |
+| `config colors ...` | 无直接映射 | 查看、预览、设置或重置任务窗口颜色。 |
+| `config terminal ...` | 无直接映射 | 查看或选择任务窗口终端适配器。 |
+| `help [COMMAND]` | 无直接映射 | 显示总览、命令参数和示例。 |
+| `about` | 无直接映射 | 显示版本、版权、许可和源码地址。 |
+| `exit` | shell `exit` | 退出控制 shell，不关闭已创建的任务窗口。 |
+| `uninstall [--purge]` | 无直接映射 | 卸载受管文件；`--purge` 还会确认并清除状态。 |
+
+也可以不进入控制 shell，直接运行 `lazy build my_robot`、`lazy test` 或 `lazy run --here ...`。这种调用不会改变当前父 shell 的环境。
+
+传给 colcon、ROS 2 或 RViz 的底层参数必须放在显式 `--` 后；LazyROS2 会移除这个分隔符，其余 argv 不经 shell 求值地逐项传递。例如：
+
+```sh
+lazy build my_robot -- --cmake-args -DCMAKE_BUILD_TYPE=Debug
+lazy run --here my_robot controller -- --ros-args -r cmd_vel:=robot/cmd_vel
+```
 
 ## 环境边界
 
