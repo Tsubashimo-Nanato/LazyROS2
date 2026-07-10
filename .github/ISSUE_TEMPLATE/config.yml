@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Tsubashimo-Nanato/LazyROS2/security/advisories/new
+    about: Report command injection, unsafe deletion, or secret exposure privately.

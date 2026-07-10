@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lazyros2"
+dynamic = ["version"]
+description = "A workspace-aware development shell for ROS 2"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+  { name = "Tsubashimo-Nanato" },
+]
+keywords = ["ROS 2", "colcon", "shell", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Build Tools",
+]
+dependencies = []
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { file = ["VERSION"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+Homepage = "https://github.com/Tsubashimo-Nanato/LazyROS2"
+Issues = "https://github.com/Tsubashimo-Nanato/LazyROS2/issues"
+Source = "https://github.com/Tsubashimo-Nanato/LazyROS2"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
