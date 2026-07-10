@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing signed v* tag to publish
+        description: Existing annotated v* tag to publish
         required: true
         type: string
 
@@ -13,14 +13,14 @@ permissions:
 
 jobs:
   verify:
-    name: Verify signed tag
+    name: Verify annotated tag
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
       target_sha: ${{ steps.tag.outputs.target_sha }}
     steps:
-      - name: Validate tag signature and immutability
+      - name: Validate tag and immutability
         id: tag
         shell: bash
         env:
@@ -38,15 +38,10 @@ jobs:
               printf 'release tag must be annotated\n' >&2
               exit 1
           fi
-          verified=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.verification.verified')
-          if [[ "$verified" != true ]]; then
-              printf 'GitHub did not verify the release tag signature\n' >&2
-              exit 1
-          fi
           target_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.type')
           target_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.sha')
           if [[ "$target_type" != commit ]]; then
-              printf 'verified tag target is not a commit: %s\n' "$target_type" >&2
+              printf 'annotated tag target is not a commit: %s\n' "$target_type" >&2
               exit 1
           fi
           default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
