@@ -228,14 +228,15 @@ case ${1-} in
         printf 'RUN:%s\\n' "$count"
         if [ "${LAZYROS_TEST_BLOCK:-0}" = 1 ] && [ "$count" -eq 1 ]; then
             exec "$LAZYROS_TEST_PYTHON" -c '
+import os
 import signal
 
 def stop(_signum, _frame):
-    print("JOB_INT", flush=True)
-    raise SystemExit(130)
+    os.write(1, b"JOB_INT\\n")
+    os._exit(130)
 
 signal.signal(signal.SIGINT, stop)
-print("JOB_WAITING", flush=True)
+os.write(1, b"JOB_WAITING\\n")
 signal.pause()
 '
         fi
