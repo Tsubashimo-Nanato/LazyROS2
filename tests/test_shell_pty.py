@@ -12,6 +12,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -226,9 +227,17 @@ case ${1-} in
         printf '%s\\n' "$count" > "$LAZYROS_TEST_STATE"
         printf 'RUN:%s\\n' "$count"
         if [ "${LAZYROS_TEST_BLOCK:-0}" = 1 ] && [ "$count" -eq 1 ]; then
-            trap 'printf "JOB_INT\\n"; exit 130' INT
-            printf 'JOB_WAITING\\n'
-            while :; do sleep 30; done
+            exec "$LAZYROS_TEST_PYTHON" -c '
+import signal
+
+def stop(_signum, _frame):
+    print("JOB_INT", flush=True)
+    raise SystemExit(130)
+
+signal.signal(signal.SIGINT, stop)
+print("JOB_WAITING", flush=True)
+signal.pause()
+'
         fi
         exit "${LAZYROS_TEST_JOB_RC:-0}"
         ;;
@@ -258,6 +267,7 @@ esac
                 "LAZYROS_TEST_FINISH_STATE": str(temp_path / "finish-state"),
                 "LAZYROS_TEST_JOB_RC": str(job_rc),
                 "LAZYROS_TEST_BLOCK": "1" if block else "0",
+                "LAZYROS_TEST_PYTHON": sys.executable,
                 "LAZYROS_WINDOW_TITLE": WINDOW_TITLE,
             }
         )
