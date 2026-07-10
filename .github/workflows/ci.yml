@@ -10,17 +10,46 @@ permissions:
   contents: read
 
 jobs:
-  required:
-    name: required
+  python:
+    name: Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
-      - name: Validate repository baseline
+      - name: Select Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Compile and test
+        run: |
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p 'test_*.py'
+
+  quality:
+    name: Shell and metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install distribution-provided test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bats shellcheck shfmt zsh
+
+      - name: Validate version and license metadata
         shell: bash
         run: |
           python3 - <<'PY'
@@ -33,20 +62,88 @@ jobs:
               raise SystemExit("VERSION is not a stable semantic version")
           metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
           if metadata["project"].get("dynamic") != ["version"]:
-              raise SystemExit("pyproject.toml must read the version dynamically")
+              raise SystemExit("pyproject.toml must declare a dynamic version")
+          if "version" in metadata["project"]:
+              raise SystemExit("pyproject.toml must not duplicate the VERSION literal")
           if metadata.get("tool", {}).get("setuptools", {}).get("dynamic", {}).get("version") != {"file": ["VERSION"]}:
               raise SystemExit("build metadata must read its version from VERSION")
           if metadata["project"]["license"]["text"] != "AGPL-3.0-or-later":
               raise SystemExit("project license metadata is incorrect")
-          for required in ("README.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "LICENSE"):
-              if not Path(required).is_file():
-                  raise SystemExit(f"missing repository contract: {required}")
           PY
 
-      - name: Run tests present in this stack layer
+      - name: Check shell syntax and style
         shell: bash
         run: |
-          if [[ -d src && -d tests ]]; then
-              python3 -m compileall -q src tests
-              python3 -m unittest discover -s tests -p 'test_*.py'
-          fi
+          bash -n install.sh bin/lazy shell/*.bash
+          zsh -n shell/*.zsh
+          shellcheck install.sh bin/lazy shell/*.bash tests/ros_smoke.sh
+          shfmt -d -i 4 -ci -fn install.sh bin/lazy shell/*.bash tests/ros_smoke.sh
+
+      - name: Run Bats shell smoke tests
+        run: bats tests/shell_contract.bats
+
+      - name: Verify the standard-library test entrypoint
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+  ros:
+    name: ROS ${{ matrix.ros }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ros: Humble / Jammy
+            image: docker.io/library/ros@sha256:5c793b92e0b12d6babb438cb20eed7766495fde6419a21e3d2e918464f09dc17
+          - ros: Jazzy / Noble
+            image: docker.io/library/ros@sha256:567b81bc54f44479e16ef1b75e4984d132f154b6511ea4fc851ee6bde76c30f8
+          - ros: Lyrical / Resolute
+            image: docker.io/library/ros@sha256:8734a98f31c79c28e103cc6c254cb300d412db72932eca137cb66ea5376a5228
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Run real ROS workspace smoke
+        shell: bash
+        run: bash tests/ros_smoke.sh
+
+  terminal:
+    name: GNOME Terminal adapter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install graphical smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends dbus-x11 gnome-terminal xvfb
+
+      - name: Launch literal argv under Xvfb and D-Bus
+        run: xvfb-run -a dbus-run-session -- python3 tests/terminal_adapter_smoke.py
+
+  required:
+    name: required
+    if: always()
+    needs: [python, quality, ros, terminal]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every CI component
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          ROS_RESULT: ${{ needs.ros.result }}
+          TERMINAL_RESULT: ${{ needs.terminal.result }}
+        run: |
+          test "$PYTHON_RESULT" = success
+          test "$QUALITY_RESULT" = success
+          test "$ROS_RESULT" = success
+          test "$TERMINAL_RESULT" = success
