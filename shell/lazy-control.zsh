@@ -22,51 +22,32 @@ _lazyros_reload_overlay()
     source "$setup_file"
 }
 
-_lazyros_command_at()
-{
-    local command_name=$1
-    local default_location=$2
-    local argument
-    shift 2
-
-    for argument in "$@"; do
-        if [[ $argument == -- ]]; then
-            break
-        fi
-
-        if [[ $argument == --here || $argument == --window ]]; then
-            command lazy "$command_name" "$@"
-            return $?
-        fi
-    done
-
-    command lazy "$command_name" "$default_location" "$@"
-}
-
-build()
-{
-    local command_status
-    command lazy build "$@"
-    command_status=$?
-
-    if (( command_status != 0 )); then
-        return "$command_status"
-    fi
-
-    _lazyros_reload_overlay
-}
+build() { command lazy build "$@"; }
 
 test() { command lazy test "$@"; }
 test-result() { command lazy test-result "$@"; }
-run() { _lazyros_command_at run --window "$@"; }
-launch() { _lazyros_command_at launch --window "$@"; }
-rviz() { _lazyros_command_at rviz --window "$@"; }
+run() { command lazy run "$@"; }
+launch() { command lazy launch "$@"; }
+rviz() { command lazy rviz "$@"; }
+rviz2() { command lazy rviz2 "$@"; }
 jobs() { command lazy jobs "$@"; }
 status() { command lazy status "$@"; }
 refresh() { command lazy refresh "$@"; }
 config() { command lazy config "$@"; }
 help() { command lazy help "$@"; }
 about() { command lazy about "$@"; }
+version() { command lazy version "$@"; }
+node() { command lazy node "$@"; }
+topic() { command lazy topic "$@"; }
+service() { command lazy service "$@"; }
+action() { command lazy action "$@"; }
+param() { command lazy param "$@"; }
+bag() { command lazy bag "$@"; }
+list() { command lazy list "$@"; }
+pkg() { command lazy pkg "$@"; }
+interface() { command lazy interface "$@"; }
+doctor() { command lazy doctor "$@"; }
+wtf() { command lazy wtf "$@"; }
 
 lazy()
 {
@@ -85,12 +66,25 @@ lazy()
         run) run "$@" ;;
         launch) launch "$@" ;;
         rviz) rviz "$@" ;;
+        rviz2) rviz2 "$@" ;;
         jobs) jobs "$@" ;;
         status) status "$@" ;;
         refresh) refresh "$@" ;;
         config) config "$@" ;;
         help) help "$@" ;;
         about) about "$@" ;;
+        version) version "$@" ;;
+        node) node "$@" ;;
+        topic) topic "$@" ;;
+        service) service "$@" ;;
+        action) action "$@" ;;
+        param) param "$@" ;;
+        bag) bag "$@" ;;
+        list) list "$@" ;;
+        pkg) pkg "$@" ;;
+        interface) interface "$@" ;;
+        doctor) doctor "$@" ;;
+        wtf) wtf "$@" ;;
         exit) builtin exit ;;
         *) command lazy "$command_name" "$@" ;;
     esac
@@ -100,6 +94,7 @@ _lazyros_compadd()
 {
     local completion_context=$1
     local completion_repeat=0
+    local selected
     shift
 
     # LASTWIDGET resets after user insertion, deletion, or cursor movement, but
@@ -113,13 +108,18 @@ _lazyros_compadd()
     _lazyros_completion_observe "$completion_context"
 
     if (( completion_repeat )); then
-        compstate[insert]=''
-        compstate[list]=list
+        selected=$(command lazy __select -- "$@") || selected=
+        if [[ -z $selected ]]; then
+            return 1
+        fi
+        compstate[insert]=all
+        compstate[list]=''
+        compadd -Q -- "$selected"
     else
         compstate[insert]=unambiguous
         compstate[list]=''
+        compadd -Q -- "$@"
     fi
-    compadd -Q -- "$@"
 }
 
 _lazyros_completion_observe()
@@ -173,7 +173,9 @@ if (( ! $+functions[compdef] )); then
 fi
 
 compdef _lazyros_complete_lazy lazy
-compdef _lazyros_complete_direct build test run launch rviz jobs config help
+compdef _lazyros_complete_direct \
+    build test run launch rviz rviz2 jobs status refresh config help about \
+    version node topic service action param bag list pkg interface doctor wtf
 
 HISTFILE=$LAZYROS_HISTORY_FILE
 HISTSIZE=2000

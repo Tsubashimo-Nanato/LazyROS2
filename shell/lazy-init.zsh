@@ -16,6 +16,7 @@ _lazyros_compadd()
 {
     local completion_context=$1
     local completion_repeat=0
+    local selected
     shift
 
     # LASTWIDGET resets after user insertion, deletion, or cursor movement, but
@@ -29,13 +30,18 @@ _lazyros_compadd()
     _lazyros_completion_observe "$completion_context"
 
     if (( completion_repeat )); then
-        compstate[insert]=''
-        compstate[list]=list
+        selected=$(command lazy __select -- "$@") || selected=
+        if [[ -z $selected ]]; then
+            return 1
+        fi
+        compstate[insert]=all
+        compstate[list]=''
+        compadd -Q -- "$selected"
     else
         compstate[insert]=unambiguous
         compstate[list]=''
+        compadd -Q -- "$@"
     fi
-    compadd -Q -- "$@"
 }
 
 _lazyros_completion_observe()

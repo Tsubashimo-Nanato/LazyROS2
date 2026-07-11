@@ -110,7 +110,7 @@ class ZshShellTests(unittest.TestCase):
             ).splitlines()
             self.assertEqual(lines, ["--shell zsh", "build package one"])
 
-    def test_control_build_reload_and_window_default(self) -> None:
+    def test_control_forwards_without_location_and_does_not_reload_after_build(self) -> None:
         zsh = usable_zsh()
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
@@ -135,21 +135,21 @@ class ZshShellTests(unittest.TestCase):
 
             result = run_zsh(
                 zsh,
-                f'source "{control}"\nrun demo talker -- "arg with space"\n'
+                f'source "{control}"\nrun demo talker "arg with space"\n'
                 "build demo",
                 env,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(source_count.read_text(encoding="utf-8").strip(), "2")
+            self.assertEqual(source_count.read_text(encoding="utf-8").strip(), "1")
             self.assertEqual(
                 Path(env["LAZYROS_TEST_LOG"])
                 .read_text(encoding="utf-8")
                 .splitlines(),
-                ["run --window demo talker -- arg with space", "build demo"],
+                ["run demo talker arg with space", "build demo"],
             )
 
-    def test_task_keeps_restart_text_in_memory_and_forces_here(self) -> None:
+    def test_task_keeps_restart_text_in_memory_and_forwards_directly(self) -> None:
         zsh = usable_zsh()
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
@@ -167,20 +167,17 @@ class ZshShellTests(unittest.TestCase):
 
             result = run_zsh(
                 zsh,
-                f'source "{task}"\nrun demo talker\nrun --window demo talker\n'
-                'print -r -- "nested=$?"',
+                f'source "{task}"\nrun demo talker',
                 env,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("nested=2", result.stdout)
-            self.assertIn("cannot open nested task windows", result.stderr)
             self.assertFalse(marker.exists())
             self.assertEqual(
                 Path(env["LAZYROS_TEST_LOG"])
                 .read_text(encoding="utf-8")
                 .splitlines(),
-                ["__job-run job-8", "run --here demo talker"],
+                ["__job-run job-8", "run demo talker"],
             )
 
 

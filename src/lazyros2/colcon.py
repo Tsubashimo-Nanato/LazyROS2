@@ -47,7 +47,7 @@ def build_argv(
     selected = _validated_packages(packages)
     extra = _validated_passthrough(passthrough)
     if up_to and not selected:
-        raise ValueError("build --up-to requires at least one package")
+        raise ValueError("build up-to requires at least one package")
 
     argv = [
         "colcon",

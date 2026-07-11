@@ -62,17 +62,18 @@ def test_zsh_double_tab_is_scoped_to_lazy_completion_state() -> None:
         assert "zstyle" not in script
 
 
-def test_controller_and_task_have_opposite_window_defaults() -> None:
+def test_controller_and_task_do_not_inject_location_flags() -> None:
     for name in ("lazy-control.bash", "lazy-control.zsh"):
         script = read_shell(name)
-        assert "_lazyros_command_at run --window" in script
-        assert "_lazyros_command_at launch --window" in script
-        assert "_lazyros_command_at rviz --window" in script
+        assert 'command lazy run "$@"' in script
+        assert 'command lazy launch "$@"' in script
+        assert 'command lazy rviz "$@"' in script
+        assert "_lazyros_command_at" not in script
 
     for name in ("lazy-task.bash", "lazy-task.zsh"):
         script = read_shell(name)
-        assert 'command lazy "$command_name" --here "$@"' in script
-        assert "task windows cannot open nested task windows" in script
+        assert "--here" not in script
+        assert "--window" not in script
 
 
 def test_task_history_is_memory_only_and_restart_line_is_not_executed() -> None:
@@ -135,8 +136,8 @@ class ShellContractTests(unittest.TestCase):
     def test_zsh_double_tab_is_scoped_to_lazy_completion_state(self) -> None:
         test_zsh_double_tab_is_scoped_to_lazy_completion_state()
 
-    def test_controller_and_task_have_opposite_window_defaults(self) -> None:
-        test_controller_and_task_have_opposite_window_defaults()
+    def test_controller_and_task_do_not_inject_location_flags(self) -> None:
+        test_controller_and_task_do_not_inject_location_flags()
 
     def test_task_history_is_memory_only_and_restart_line_is_not_executed(self) -> None:
         test_task_history_is_memory_only_and_restart_line_is_not_executed()

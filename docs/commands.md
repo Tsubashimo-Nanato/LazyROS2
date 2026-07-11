@@ -1,4 +1,4 @@
-# LazyROS2 v0.1 命令参考
+# LazyROS2 v0.2 命令参考
 
 ## 调用方式
 
@@ -19,18 +19,17 @@ lazy build lidar_driver
 
 ## 构建与测试
 
-### `build [PKG...] [-- ARGS...]`
+### `build [PKG...]`
 
 - 无 package：`colcon build`。
 - 指定 package：`colcon build --packages-select PKG...`。
-- `build --up-to PKG...`：`colcon build --packages-up-to PKG...`。
-- `--` 后的参数按 argv 原样传给 colcon。
+- `build up-to PKG...`：`colcon build --packages-up-to PKG...`。
 
-`build PKG` 始终先只构建目标 package。失败后，只有 LazyROS2 找到尚未安装的 workspace 依赖候选时，交互控制 shell 才询问是否改用 `--packages-up-to` 重试。候选只是重试依据，不会被描述成已确认的失败根因。非交互 CLI 从不询问，保留原失败码。
+`build PKG` 始终先只构建目标 package。失败后，只有 LazyROS2 找到尚未安装的 workspace 依赖候选时，任务窗口才询问是否改用 `--packages-up-to` 重试。候选只是重试依据，不会被描述成已确认的失败根因。非交互 CLI 从不询问，保留原失败码。
 
-以下参数不能出现在透传区：package selection 参数、`--base-paths`、`--build-base`、`--install-base`、`--log-base` 和 `--merge-install`。需要自定义 colcon 布局时应直接调用原生命令。
+Lazy 不公开 colcon 参数透传。需要 CMake 参数、自定义 selection 或自定义布局时直接调用原生 `colcon`。
 
-### `test [PKG...] [-- ARGS...]`
+### `test [PKG...]`
 
 无 package 时测试全部；指定 package 时使用 `--packages-select`。测试命令结束后自动运行：
 
@@ -46,34 +45,46 @@ colcon test-result --verbose
 
 ## 运行工具
 
-### `run [--window|--here] PKG EXEC [-- ARGS...]`
+### `run PKG [EXEC] [ARGS...]`
 
-映射为 `ros2 run PKG EXEC ARGS...`。控制 shell 默认 `--window`，普通 CLI 默认 `--here`。
+映射为 `ros2 run PKG EXEC ARGS...`。只有一个 executable 时，提交 `run PKG` 会自动选择；多个时必须用 Tab 选择。若需要传 ARGS，必须明确写出 EXEC。
 
-### `launch [--window|--here] PKG FILE [-- ARGS...]`
+### `launch PKG FILE [ARGS...]`
 
 映射为 `ros2 launch PKG FILE ARGS...`，窗口默认值与 `run` 相同。LazyROS2 递归发现已安装 package 的 launch 文件，但传给 `ros2 launch` 的是 basename。同一 package 出现重复 basename 时会报告歧义，不会静默选择。
 
-### `rviz [--window|--here] [CONFIG] [-- ARGS...]`
+### `rviz [CONFIG]` / `rviz2 [CONFIG]`
 
-无配置时运行 `rviz2`；有配置时运行 `rviz2 -d CONFIG`。控制 shell 默认创建任务窗口。
+两个入口同义。无配置时运行 `rviz2`；有配置时运行 `rviz2 -d CONFIG`。
 
-三条命令的额外底层参数都必须位于显式 `--` 后。LazyROS2 只移除分隔符，后续 argv 不做拼接、展开或求值。例如：
+固定 token 之后的运行参数按 argv 原样传递，不需要额外分隔符。例如：
 
 ```sh
-lazy run --here demo talker -- --ros-args -r 'chatter:=robot chatter'
-lazy launch demo bringup.launch.py -- use_sim_time:=true
+lazy run demo talker --ros-args -r 'chatter:=robot chatter'
+lazy launch demo bringup.launch.py use_sim_time:=true
 ```
 
 任务窗口在进程成功、失败或收到 Ctrl+C 后保持打开，并回到任务 prompt。首次命令只放在该窗口的内存历史中；上箭头、回车即可重新运行。每次重启前重新读取 workspace 的 `install/local_setup.*`。
 
-若没有图形会话或支持的终端，`--window` 返回错误并建议 `--here`，不会静默改变运行位置。GNOME Terminal 是 v0.1 的正式窗口适配器；`xdg-terminal-exec`、Konsole、Kitty、Ghostty 和 Alacritty 为 experimental。
+控制 shell 中的 build/test/run/launch/RViz 自动创建任务窗口；普通 CLI 在当前前台执行。没有图形会话或终端适配器时会明确报错，不会静默改变运行位置。GNOME Terminal 是 v0.1 的正式窗口适配器；其他适配器为 experimental。
+
+## ROS graph、bag 与 package
+
+- `node`、`topic`、`service`、`action`、`param`：零参数打开实时列表窗口；空格后 Tab 补动作，再按上下文补 ROS graph 对象。
+- `bag record TOPIC...`：在 workspace 根目录录制，topic 可补全。
+- `bag play BAG [TOPIC...]`：先补 workspace 中的 bag，再补 metadata 中的 topic。
+- `bag info BAG`：显示 bag 信息。
+- `list`：列出当前 workspace package。
+- `pkg list`：列出当前 ROS/overlay 已安装的 package。
+- `pkg create NAME TYPE [DEP...]`：在 `<workspace>/src` 创建 package；TYPE 为 `python` 或 `cpp`。
+- `interface TYPE`：显示 interface 定义。
+- `doctor` / `wtf`：在任务窗口运行 ROS doctor。
 
 ## 会话与状态
 
-### `jobs [NUMBER]`
+### `jobs`
 
-列出 LazyROS2 创建的任务窗口，包括编号、颜色槽、命令类型、目标、状态、退出码和任务 shell PID。可选编号只显示该任务。它不会替代原生 shell job control；在 Bash 或 zsh 中使用 `builtin jobs` 查看 shell job。
+打开实时任务面板，显示编号、颜色槽、命令类型、目标、状态、退出码和任务 shell PID。它不会替代原生 shell job control；在 Bash 或 zsh 中使用 `builtin jobs` 查看 shell job。
 
 ### `status`
 
@@ -105,18 +116,20 @@ lazy launch demo bringup.launch.py -- use_sim_time:=true
 - `about`：显示版本、版权、`AGPL-3.0-or-later`、无担保声明和源码地址。
 - `uninstall [--purge] [--force]`：调用当前 payload 中的受管卸载器。
 - `exit`：退出控制 shell；已创建的任务窗口继续运行。
-- `lazy --version`：输出包含 `VERSION` 中版本号的版本文本。
+- `version`：输出包含 `VERSION` 中版本号的单行版本文本；`lazy --version` 暂时保留兼容。
 
 ## 补全数据
 
 - `build`、`test`：workspace package。
 - `run`：具有 executable 的 package，以及所选 package 的 executable。
 - `launch`：具有 launch 文件的已安装 package，以及所选 package 的文件 basename。
-- `rviz`：`.rviz` 文件。
-- `jobs`：任务编号。
+- `rviz` / `rviz2`：`.rviz` 文件。
+- graph 命令：动作和实时 ROS graph 对象。
+- `bag`：topic、bag 路径和 bag metadata 中的 topic。
+- `pkg create`：`python/cpp` 与 dependency package。
 - `config`：颜色槽和终端适配器。
 
-首次 Tab 只接受唯一候选或公共前缀；缓冲区未改变时再次 Tab 才列出全部。缓存命中目标不超过 100 ms；冷采集硬超时为 2 秒，超时时使用 stale 快照。
+首次 Tab 只接受唯一候选或公共前缀；连续第二次 Tab 打开候选选择器，可用上下方向键选择并用 Enter 确认。缓存命中目标不超过 100 ms；冷采集硬超时为 2 秒，超时时使用 stale 快照。
 
 ## 退出码
 
