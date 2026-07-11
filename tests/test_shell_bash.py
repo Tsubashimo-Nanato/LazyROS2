@@ -111,9 +111,9 @@ class BashShellTests(unittest.TestCase):
             ).splitlines()
             self.assertEqual(lines, ["--shell bash", "build package one"])
 
-    def test_control_sources_overlay_only_after_successful_build(self) -> None:
+    def test_control_build_does_not_reload_overlay_before_task_finishes(self) -> None:
         bash = usable_bash()
-        for build_status, expected_sources in (("0", 2), ("19", 1)):
+        for build_status in ("0", "19"):
             with self.subTest(build_status=build_status):
                 with tempfile.TemporaryDirectory() as temp_dir:
                     tmp_path = Path(temp_dir)
@@ -146,11 +146,11 @@ class BashShellTests(unittest.TestCase):
 
                     self.assertEqual(
                         int(source_count.read_text(encoding="utf-8")),
-                        expected_sources,
+                        1,
                     )
                     self.assertEqual(result.returncode, int(build_status))
 
-    def test_control_and_task_inject_location_before_user_arguments(self) -> None:
+    def test_control_forwards_arguments_without_location_or_separator(self) -> None:
         bash = usable_bash()
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
@@ -159,8 +159,7 @@ class BashShellTests(unittest.TestCase):
 
             result = run_bash(
                 bash,
-                f'source "{control}"\nrun demo talker -- "arg with space"\n'
-                "run --here demo talker",
+                f'source "{control}"\nrun demo talker "arg with space"',
                 env,
             )
 
@@ -170,10 +169,7 @@ class BashShellTests(unittest.TestCase):
             ).splitlines()
             self.assertEqual(
                 lines,
-                [
-                    "run --window demo talker -- arg with space",
-                    "run --here demo talker",
-                ],
+                ["run demo talker arg with space"],
             )
 
     def test_task_does_not_execute_restart_history_text(self) -> None:
@@ -194,20 +190,17 @@ class BashShellTests(unittest.TestCase):
 
             result = run_bash(
                 bash,
-                f'source "{task}"\nrun demo talker\nrun --window demo talker\n'
-                'printf "nested=%s\\n" "$?"',
+                f'source "{task}"\nrun demo talker',
                 env,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("nested=2", result.stdout)
-            self.assertIn("cannot open nested task windows", result.stderr)
             self.assertFalse(marker.exists())
             self.assertEqual(
                 Path(env["LAZYROS_TEST_LOG"])
                 .read_text(encoding="utf-8")
                 .splitlines(),
-                ["__job-run job-7", "run --here demo talker"],
+                ["__job-run job-7", "run demo talker"],
             )
 
 

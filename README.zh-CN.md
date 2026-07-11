@@ -21,7 +21,7 @@ LazyROS2 不会替代 `ros2` 或 `colcon`。需要高级用法时，原生命令
 
 ## 主要能力
 
-- 补全 workspace package、executable、launch 文件、RViz 配置和任务编号。
+- 补全 workspace package、executable、launch 文件、RViz 配置、ROS graph 对象、bag 和任务。
 - 构建单个 package，不再重复输入冗长的选择参数。
 - 在带编号和配色的独立窗口中运行 ROS 进程。
 - Ctrl+C 后按上箭头和回车即可重新运行任务。
@@ -44,7 +44,7 @@ LazyROS2 暂不支持在同一个实例中叠加多层 overlay。一个实例，
 ## 安装
 
 ```sh
-git clone --branch v0.1.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
+git clone --branch v0.2.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
 cd LazyROS2
 sh install.sh
 ```
@@ -57,20 +57,22 @@ sh install.sh
 $ cd ~/robot_ws
 $ lazy
 [lazy:robot_ws | ros:jazzy] $ build my_robot
+[lazy:robot_ws | ros:jazzy] $ build up-to navigation_bringup
 [lazy:robot_ws | ros:jazzy] $ test my_robot
 [lazy:robot_ws | ros:jazzy] $ run my_robot controller
 [lazy:robot_ws | ros:jazzy] $ launch my_robot bringup.launch.py
 [lazy:robot_ws | ros:jazzy] $ rviz config/navigation.rviz
 [lazy:robot_ws | ros:jazzy] $ jobs
+[lazy:robot_ws | ros:jazzy] $ topic
 ```
 
-使用 `help COMMAND` 查看准确语法。在控制 shell 中，`run`、`launch` 和 `rviz` 默认打开任务窗口；传入 `--here` 可留在当前终端。
+使用 `help COMMAND` 查看准确语法。控制 shell 中的 build、test、run、launch、RViz、实时 graph 和 jobs 使用可保留的任务窗口。按一次 Tab 补前缀，再按一次即可用方向键选择。
 
 脚本和 CI 可以直接使用非交互 CLI：
 
 ```sh
 lazy build my_robot
-lazy run --here my_robot controller
+lazy run my_robot controller
 ```
 
 ## 支持范围
@@ -82,13 +84,14 @@ lazy run --here my_robot controller
 | Ubuntu 26.04 | Lyrical | 3.14 | 支持 |
 | Fedora 44 | Jazzy + micromamba | 发行版环境 | Experimental |
 
-x86_64 上支持 Bash 和 zsh；arm64 为 best-effort。Windows、macOS、PowerShell 和多层 overlay 栈不在 v0.1 范围内。
+x86_64 上支持 Bash 和 zsh；arm64 为 best-effort，并已在 Ubuntu 22.04 + ROS 2 Humble 的 Jetson 上完成 smoke test。Windows、macOS、PowerShell 和多层 overlay 栈不在 v0.2 范围内。
 
 ## 文档
 
 - [命令参考](docs/commands.md)
 - [安装与卸载](docs/install-layout.md)
 - [验证矩阵](docs/validation.md)
+- [Jetson Humble smoke 报告](docs/jetson-humble-smoke-2026-07-11.md)
 - [参与开发](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 

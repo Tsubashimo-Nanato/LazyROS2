@@ -22,34 +22,10 @@ _lazyros_task_overlay()
     source "$setup_file"
 }
 
-_lazyros_command_at()
-{
-    local command_name=$1
-    local argument
-    shift
-
-    for argument in "$@"; do
-        if [[ $argument == -- ]]; then
-            break
-        fi
-
-        if [[ $argument == --window ]]; then
-            print -u2 -r -- 'lazy: task windows cannot open nested task windows.'
-            return 2
-        fi
-
-        if [[ $argument == --here ]]; then
-            command lazy "$command_name" "$@"
-            return $?
-        fi
-    done
-
-    command lazy "$command_name" --here "$@"
-}
-
-run() { _lazyros_command_at run "$@"; }
-launch() { _lazyros_command_at launch "$@"; }
-rviz() { _lazyros_command_at rviz "$@"; }
+run() { command lazy run "$@"; }
+launch() { command lazy launch "$@"; }
+rviz() { command lazy rviz "$@"; }
+rviz2() { command lazy rviz2 "$@"; }
 
 lazy()
 {
@@ -65,6 +41,7 @@ lazy()
         run) run "$@" ;;
         launch) launch "$@" ;;
         rviz) rviz "$@" ;;
+        rviz2) rviz2 "$@" ;;
         __job-run)
             if (( $# != 1 )) || [[ $1 != "$LAZYROS_JOB_ID" ]]; then
                 print -u2 -r -- 'lazy: this task can only restart its own job.'

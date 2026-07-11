@@ -46,12 +46,11 @@ class CliParserTests(unittest.TestCase):
                 self.assertEqual(wrapper, expected_wrapper)
                 self.assertEqual(tuple(values[len(expected_wrapper) + 1 :]), forwarded)
 
-    def test_ros_parser_rejects_extra_arguments_without_separator(self) -> None:
+    def test_ros_parser_accepts_process_arguments_without_separator(self) -> None:
         parser, _ = cli._build_parser()
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as raised:
-                parser.parse_args(["run", "demo", "talker", "--ros-args"])
-        self.assertEqual(raised.exception.code, 2)
+        parsed = parser.parse_args(["run", "demo", "talker", "--ros-args", "-r", "a:=b"])
+        self.assertEqual(parsed.executable, "talker")
+        self.assertEqual(parsed.arguments, ["--ros-args", "-r", "a:=b"])
 
     def test_ros_argv_maps_forwarded_values_literally(self) -> None:
         run = argparse.Namespace(command="run", package="demo pkg", executable="$(touch nope)")
@@ -72,7 +71,8 @@ class CliParserTests(unittest.TestCase):
                 "'quoted'",
             ),
         )
-        self.assertEqual(high_level[4], "--")
+        self.assertNotIn("--", high_level)
+        self.assertEqual(high_level[3:], ("--ros-args", "value with space", "*", "'quoted'"))
         self.assertEqual(target, "demo pkg/$(touch nope)")
 
     def test_no_argument_cli_starts_detected_control_shell(self) -> None:
@@ -106,6 +106,15 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("examples:", rendered)
         self.assertNotIn("__job-run", rendered)
         self.assertNotIn("__complete", rendered)
+
+    def test_version_is_a_public_subcommand_and_legacy_flag_still_works(self) -> None:
+        for argv in (("version",), ("--version",)):
+            with self.subTest(argv=argv), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                with self.assertRaises(SystemExit) if argv == ("--version",) else contextlib.nullcontext():
+                    code = cli.main(argv)
+                if argv == ("version",):
+                    self.assertEqual(code, 0)
+                self.assertIn("lazy", stdout.getvalue())
 
 
 class CliCommandTests(unittest.TestCase):
@@ -170,7 +179,7 @@ class CliCommandTests(unittest.TestCase):
         ), mock.patch.object(
             cli.sys, "stderr", io.StringIO()
         ), mock.patch.dict(
-            os.environ, {"LAZYROS_ACTIVE": "control"}, clear=False
+            os.environ, {"LAZYROS_ACTIVE": "job"}, clear=False
         ), mock.patch(
             "builtins.input", return_value="yes"
         ):
@@ -199,6 +208,96 @@ class CliCommandTests(unittest.TestCase):
         ):
             self.assertEqual(cli._build(args, ()), 7)
         run.assert_called_once()
+
+    def test_control_build_opens_task_window_with_positional_up_to(self) -> None:
+        args = argparse.Namespace(
+            packages=("up-to", "lazy_app"),
+            legacy_up_to=False,
+            location=None,
+        )
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_spawn_job", return_value=0
+        ) as spawn, mock.patch.dict(
+            os.environ, {"LAZYROS_ACTIVE": "control"}, clear=False
+        ):
+            self.assertEqual(cli._build(args, ()), 0)
+        spawn.assert_called_once_with(
+            self.workspace,
+            ("build", "up-to", "lazy_app"),
+            "lazy_app",
+        )
+
+    def test_run_without_executable_auto_selects_only_choice(self) -> None:
+        args = argparse.Namespace(
+            command="run",
+            package="demo",
+            executable=None,
+            arguments=(),
+            location="here",
+        )
+        collector = mock.Mock()
+        collector.collect_executables.return_value = {"demo": ("talker",)}
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_runtime_environment", return_value={}
+        ), mock.patch.object(
+            cli, "CompletionCollector", return_value=collector
+        ), mock.patch.object(cli, "_run", return_value=0) as run:
+            self.assertEqual(cli._run_ros_command(args, ()), 0)
+        self.assertEqual(args.executable, "talker")
+        self.assertEqual(run.call_args.args[0], ("ros2", "run", "demo", "talker"))
+
+    def test_graph_zero_command_spawns_live_window_from_control(self) -> None:
+        args = argparse.Namespace(command="topic", graph_args=(), location=None)
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_spawn_job", return_value=0
+        ) as spawn, mock.patch.dict(
+            os.environ, {"LAZYROS_ACTIVE": "control"}, clear=False
+        ):
+            self.assertEqual(cli._graph_command(args), 0)
+        spawn.assert_called_once_with(self.workspace, ("topic",), "topic")
+
+    def test_bag_play_maps_optional_topics_without_public_separator(self) -> None:
+        args = argparse.Namespace(
+            bag_action="play",
+            bag="bags/demo",
+            topics=("/scan", "/tf"),
+            location="here",
+        )
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_runtime_environment", return_value={}
+        ), mock.patch.object(cli, "_run", return_value=0) as run:
+            self.assertEqual(cli._bag(args), 0)
+        self.assertEqual(
+            run.call_args.args[0],
+            ("ros2", "bag", "play", "bags/demo", "--topics", "/scan", "/tf"),
+        )
+
+    def test_pkg_create_maps_friendly_type_and_dependencies(self) -> None:
+        args = argparse.Namespace(
+            pkg_action="create",
+            name="demo_pkg",
+            type="cpp",
+            dependencies=("rclcpp", "std_msgs"),
+        )
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_runtime_environment", return_value={}
+        ), mock.patch.object(cli, "_run", return_value=0) as run:
+            self.assertEqual(cli._pkg(args), 0)
+        self.assertEqual(
+            run.call_args.args[0],
+            (
+                "ros2",
+                "pkg",
+                "create",
+                "demo_pkg",
+                "--build-type",
+                "ament_cmake",
+                "--dependencies",
+                "rclcpp",
+                "std_msgs",
+            ),
+        )
+        self.assertEqual(run.call_args.kwargs["cwd"], self.workspace.src)
 
     def test_jobs_filter_uses_current_workspace_and_prints_pid(self) -> None:
         record = JobRecord(
@@ -283,9 +382,29 @@ class CliCompletionTests(unittest.TestCase):
             self.candidates(["lazy", "run", "demo", "t"]),
             ("talker",),
         )
+        self.assertEqual(self.candidates(["lazy", "run", "d"]), ("demo",))
+        self.assertEqual(self.candidates(["lazy", "run", "--window", "d"]), ())
+
+    def test_normalized_build_graph_pkg_and_rviz_completion(self) -> None:
         self.assertEqual(
-            self.candidates(["lazy", "run", "--window", "d"]),
+            self.candidates(["lazy", "build", ""]),
+            ("demo", "messages", "up-to"),
+        )
+        self.assertEqual(
+            self.candidates(["lazy", "build", "up-to", "d"]),
             ("demo",),
+        )
+        self.assertEqual(
+            self.candidates(["lazy", "topic", ""]),
+            tuple(sorted(cli.GRAPH_ACTIONS["topic"])),
+        )
+        self.assertEqual(
+            self.candidates(["lazy", "pkg", "create", "demo_pkg", ""]),
+            ("cpp", "python"),
+        )
+        self.assertEqual(
+            self.candidates(["lazy", "rviz2", "c"]),
+            ("config/view.rviz",),
         )
 
     def test_static_top_level_completion_needs_no_workspace_or_ros(self) -> None:

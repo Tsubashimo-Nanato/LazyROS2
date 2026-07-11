@@ -25,38 +25,9 @@ _lazyros_reload_overlay()
     source "$setup_file"
 }
 
-_lazyros_command_at()
-{
-    local command_name=$1
-    local default_location=$2
-    local argument
-    shift 2
-
-    for argument in "$@"; do
-        if [[ $argument == -- ]]; then
-            break
-        fi
-
-        if [[ $argument == --here || $argument == --window ]]; then
-            command lazy "$command_name" "$@"
-            return $?
-        fi
-    done
-
-    command lazy "$command_name" "$default_location" "$@"
-}
-
 build()
 {
-    local command_status
     command lazy build "$@"
-    command_status=$?
-
-    if ((command_status != 0)); then
-        return "$command_status"
-    fi
-
-    _lazyros_reload_overlay
 }
 
 test()
@@ -71,17 +42,22 @@ test-result()
 
 run()
 {
-    _lazyros_command_at run --window "$@"
+    command lazy run "$@"
 }
 
 launch()
 {
-    _lazyros_command_at launch --window "$@"
+    command lazy launch "$@"
 }
 
 rviz()
 {
-    _lazyros_command_at rviz --window "$@"
+    command lazy rviz "$@"
+}
+
+rviz2()
+{
+    command lazy rviz2 "$@"
 }
 
 jobs()
@@ -114,6 +90,55 @@ about()
     command lazy about "$@"
 }
 
+version()
+{
+    command lazy version "$@"
+}
+node()
+{
+    command lazy node "$@"
+}
+topic()
+{
+    command lazy topic "$@"
+}
+service()
+{
+    command lazy service "$@"
+}
+action()
+{
+    command lazy action "$@"
+}
+param()
+{
+    command lazy param "$@"
+}
+bag()
+{
+    command lazy bag "$@"
+}
+list()
+{
+    command lazy list "$@"
+}
+pkg()
+{
+    command lazy pkg "$@"
+}
+interface()
+{
+    command lazy interface "$@"
+}
+doctor()
+{
+    command lazy doctor "$@"
+}
+wtf()
+{
+    command lazy wtf "$@"
+}
+
 lazy()
 {
     local command_name=${1-}
@@ -131,15 +156,96 @@ lazy()
         run) run "$@" ;;
         launch) launch "$@" ;;
         rviz) rviz "$@" ;;
+        rviz2) rviz2 "$@" ;;
         jobs) jobs "$@" ;;
         status) status "$@" ;;
         refresh) refresh "$@" ;;
         config) config "$@" ;;
         help) help "$@" ;;
         about) about "$@" ;;
+        version) version "$@" ;;
+        node) node "$@" ;;
+        topic) topic "$@" ;;
+        service) service "$@" ;;
+        action) action "$@" ;;
+        param) param "$@" ;;
+        bag) bag "$@" ;;
+        list) list "$@" ;;
+        pkg) pkg "$@" ;;
+        interface) interface "$@" ;;
+        doctor) doctor "$@" ;;
+        wtf) wtf "$@" ;;
         exit) builtin exit ;;
         *) command lazy "$command_name" "$@" ;;
     esac
+}
+
+_lazyros_second_tab()
+{
+    local candidate
+    local character
+    local common_prefix
+    local context=${READLINE_LINE-}'|'${READLINE_POINT-0}
+    local current_word
+    local end
+    local expected_line
+    local expected_point
+    local -a filtered=()
+    local selected
+    local start=${_LAZYROS_COMPLETION_TOKEN_START:-0}
+
+    bind '"\C-i": complete'
+    if [[ ${_LAZYROS_COMPLETION_EXPECTED:-} != "$context" ]]; then
+        if ((READLINE_POINT < start)) ||
+            [[ ${READLINE_LINE:0:start} != "${_LAZYROS_COMPLETION_EXPECTED:0:start}" ]]; then
+            unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
+            unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
+            return 0
+        fi
+        end=$READLINE_POINT
+        while ((end < ${#READLINE_LINE})); do
+            character=${READLINE_LINE:end:1}
+            [[ $character == [[:space:]] ]] && break
+            ((end += 1))
+        done
+        current_word=${READLINE_LINE:start:READLINE_POINT-start}
+        for candidate in "${_LAZYROS_COMPLETION_CANDIDATES[@]}"; do
+            [[ $candidate == "$current_word"* ]] && filtered+=("$candidate")
+        done
+        if ((${#filtered[@]} == 0)); then
+            unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
+            unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
+            return 0
+        fi
+        common_prefix=${filtered[0]}
+        for candidate in "${filtered[@]:1}"; do
+            while [[ $candidate != "$common_prefix"* ]]; do
+                common_prefix=${common_prefix%?}
+            done
+        done
+        READLINE_LINE=${READLINE_LINE:0:start}${common_prefix}${READLINE_LINE:end}
+        READLINE_POINT=$((start + ${#common_prefix}))
+        if ((${#filtered[@]} > 1)); then
+            expected_line=$READLINE_LINE
+            expected_point=$READLINE_POINT
+            _LAZYROS_COMPLETION_EXPECTED=$expected_line'|'$expected_point
+            _LAZYROS_COMPLETION_PREFIX=$common_prefix
+            _LAZYROS_COMPLETION_CANDIDATES=("${filtered[@]}")
+            bind -x '"\C-i":_lazyros_second_tab'
+            return 0
+        fi
+        unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
+        unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
+        return 0
+    fi
+
+    selected=$(command lazy __select -- "${_LAZYROS_COMPLETION_CANDIDATES[@]}") || selected=
+    if [[ -n $selected ]]; then
+        READLINE_LINE=${READLINE_LINE:0:start}${selected}${READLINE_LINE:READLINE_POINT}
+        READLINE_POINT=$((start + ${#selected}))
+    fi
+    unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
+    unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
 }
 
 _lazyros_completion_candidates()
@@ -147,6 +253,9 @@ _lazyros_completion_candidates()
     local cursor=$1
     local current_word=$2
     local candidate
+    local common_prefix
+    local expected_line
+    local expected_point
     shift 2
     COMPREPLY=()
 
@@ -160,6 +269,24 @@ _lazyros_completion_candidates()
             --cursor "$cursor" \
             -- "$@" 2>/dev/null
     )
+
+    if ((${#COMPREPLY[@]} <= 1)); then
+        return 0
+    fi
+
+    common_prefix=${COMPREPLY[0]}
+    for candidate in "${COMPREPLY[@]:1}"; do
+        while [[ $candidate != "$common_prefix"* ]]; do
+            common_prefix=${common_prefix%?}
+        done
+    done
+    expected_line=${COMP_LINE:0:COMP_POINT-${#current_word}}${common_prefix}${COMP_LINE:COMP_POINT}
+    expected_point=$((COMP_POINT - ${#current_word} + ${#common_prefix}))
+    _LAZYROS_COMPLETION_EXPECTED=$expected_line'|'$expected_point
+    _LAZYROS_COMPLETION_TOKEN_START=$((COMP_POINT - ${#current_word}))
+    _LAZYROS_COMPLETION_PREFIX=$common_prefix
+    _LAZYROS_COMPLETION_CANDIDATES=("${COMPREPLY[@]}")
+    bind -x '"\C-i":_lazyros_second_tab'
 }
 
 _lazyros_complete_lazy()
@@ -182,7 +309,8 @@ _lazyros_complete_direct()
 if type complete >/dev/null 2>&1; then
     complete -o bashdefault -o default -F _lazyros_complete_lazy lazy
     complete -o bashdefault -o default -F _lazyros_complete_direct \
-        build test run launch rviz jobs config help
+        build test run launch rviz rviz2 jobs status refresh config help about \
+        version node topic service action param bag list pkg interface doctor wtf
 fi
 
 HISTFILE=$LAZYROS_HISTORY_FILE

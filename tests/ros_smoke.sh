@@ -103,14 +103,14 @@ if ((select_status == 0)); then
     exit 1
 fi
 
-"$lazy" build --up-to lazy_app
+"$lazy" build up-to lazy_app
 "$lazy" build
 "$lazy" test lazy_app
 "$lazy" test-result
 
-"$lazy" run --here lazy_app hello -- "value with space" | grep -F 'lazy-app-v1 value with space'
+"$lazy" run lazy_app hello "value with space" | grep -F 'lazy-app-v1 value with space'
 set +e
-launch_output=$("$lazy" launch --here lazy_app smoke.launch.py 2>&1)
+launch_output=$("$lazy" launch lazy_app smoke.launch.py 2>&1)
 launch_status=$?
 set -e
 printf '%s\n' "$launch_output"
@@ -125,14 +125,14 @@ grep -F 'lazy-app-v1 launched' <<<"$launch_output"
 
 sed -i 's/lazy-app-v1/lazy-app-v2/' "$workspace/src/lazy_app/scripts/hello"
 "$lazy" build lazy_app
-"$lazy" run --here lazy_app hello | grep -F 'lazy-app-v2'
+"$lazy" run lazy_app hello | grep -F 'lazy-app-v2'
 
 mkdir -p "$workspace/src/lazy_app/launch/nested"
 cp "$workspace/src/lazy_app/launch/smoke.launch.py" \
     "$workspace/src/lazy_app/launch/nested/smoke.launch.py"
 "$lazy" build lazy_app
 set +e
-ambiguous_output=$("$lazy" launch --here lazy_app smoke.launch.py 2>&1)
+ambiguous_output=$("$lazy" launch lazy_app smoke.launch.py 2>&1)
 ambiguous_status=$?
 set -e
 ((ambiguous_status == 2))

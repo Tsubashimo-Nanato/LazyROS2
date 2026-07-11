@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ from typing import Mapping, Sequence
 from lazyros2.colcon import (
     ColconError,
     build_argv,
+    discover_packages,
     find_missing_workspace_dependencies,
     test_argv,
     test_result_argv,
@@ -50,16 +52,45 @@ PUBLIC_COMMANDS = (
     "run",
     "launch",
     "rviz",
+    "rviz2",
     "jobs",
     "status",
     "refresh",
     "config",
     "help",
     "about",
+    "version",
+    "node",
+    "topic",
+    "service",
+    "action",
+    "param",
+    "bag",
+    "list",
+    "pkg",
+    "interface",
+    "doctor",
+    "wtf",
     "uninstall",
     "exit",
 )
 COMPLETION_BUDGET_SECONDS = 1.5
+
+GRAPH_COMMANDS = ("node", "topic", "service", "action", "param")
+GRAPH_ACTIONS: dict[str, tuple[str, ...]] = {
+    "node": ("info",),
+    "topic": ("echo", "info", "type", "find", "hz", "bw", "delay", "pub"),
+    "service": ("list", "type", "find", "call", "echo", "info"),
+    "action": ("list", "info", "type", "send_goal"),
+    "param": ("list", "get", "set", "delete", "describe", "dump", "load"),
+}
+GRAPH_OBJECT_ACTIONS: dict[str, frozenset[str]] = {
+    "node": frozenset({"info"}),
+    "topic": frozenset({"echo", "info", "type", "hz", "bw", "delay", "pub"}),
+    "service": frozenset({"type", "call", "echo", "info"}),
+    "action": frozenset({"info", "type", "send_goal"}),
+    "param": frozenset({"list", "get", "set", "delete", "describe", "dump", "load"}),
+}
 
 
 class LazyError(RuntimeError):
@@ -233,8 +264,14 @@ def _mark_completion_dirty(workspace: Workspace, env: Mapping[str, str]) -> None
         marked.add(key)
 
 
-def _run(argv: Sequence[str], workspace: Workspace, env: Mapping[str, str]) -> int:
-    result = run_command(argv, cwd=workspace.root, env=env)
+def _run(
+    argv: Sequence[str],
+    workspace: Workspace,
+    env: Mapping[str, str],
+    *,
+    cwd: Path | None = None,
+) -> int:
+    result = run_command(argv, cwd=workspace.root if cwd is None else cwd, env=env)
     if result.returncode in {124, 126, 127} and result.stderr:
         print(f"lazy: {result.stderr.strip()}", file=sys.stderr)
     return result.exit_code
@@ -242,13 +279,24 @@ def _run(argv: Sequence[str], workspace: Workspace, env: Mapping[str, str]) -> i
 
 def _build(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
     workspace = _workspace()
+    packages, up_to = _build_selection(args)
+    if _should_open_task_window(args):
+        public_command = (
+            "build",
+            *(("up-to",) if up_to else ()),
+            *packages,
+            *(("--", *passthrough) if passthrough else ()),
+        )
+        target = "all" if not packages else ",".join(packages)
+        return _spawn_job(workspace, public_command, target)
+
     baseline = _baseline_for_build(workspace, os.environ)
     evidence = None
-    if args.packages and not args.up_to:
+    if packages and not up_to:
         try:
             evidence = find_missing_workspace_dependencies(
                 workspace,
-                args.packages,
+                packages,
                 baseline,
             )
         except ColconError:
@@ -256,8 +304,8 @@ def _build(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
 
     command = build_argv(
         workspace,
-        args.packages,
-        up_to=args.up_to,
+        packages,
+        up_to=up_to,
         passthrough=passthrough,
     )
     exit_code = _run(command, workspace, baseline)
@@ -283,7 +331,7 @@ def _build(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
     if reply not in {"y", "yes"}:
         return exit_code
 
-    retry = build_argv(workspace, args.packages, up_to=True, passthrough=passthrough)
+    retry = build_argv(workspace, packages, up_to=True, passthrough=passthrough)
     retry_code = _run(retry, workspace, baseline)
     if retry_code == 0:
         _mark_completion_dirty(workspace, os.environ)
@@ -295,16 +343,40 @@ def _should_offer_dependency_retry(evidence: object) -> bool:
         return False
     if not getattr(evidence, "missing_dependencies", ()):
         return False
-    if os.environ.get("LAZYROS_ACTIVE") != "control":
+    if os.environ.get("LAZYROS_ACTIVE") not in {"control", "job"}:
         return False
     return sys.stdin.isatty()
 
 
+def _build_selection(args: argparse.Namespace) -> tuple[tuple[str, ...], bool]:
+    packages = tuple(args.packages)
+    positional_up_to = bool(packages and packages[0] == "up-to")
+    legacy_up_to = bool(getattr(args, "legacy_up_to", False) or getattr(args, "up_to", False))
+    if positional_up_to:
+        packages = packages[1:]
+    if positional_up_to and legacy_up_to:
+        raise UsageError("build up-to cannot be combined with legacy --up-to")
+    up_to = positional_up_to or legacy_up_to
+    if up_to and not packages:
+        raise UsageError("build up-to requires at least one package")
+    return packages, up_to
+
+
 def _test(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
     workspace = _workspace()
+    packages = tuple(args.packages)
+    if _should_open_task_window(args):
+        public_command = (
+            "test",
+            *packages,
+            *(("--", *passthrough) if passthrough else ()),
+        )
+        target = "all" if not packages else ",".join(packages)
+        return _spawn_job(workspace, public_command, target)
+
     baseline = _baseline_for_build(workspace, os.environ)
     test_code = _run(
-        test_argv(workspace, args.packages, passthrough=passthrough),
+        test_argv(workspace, packages, passthrough=passthrough),
         workspace,
         baseline,
     )
@@ -319,11 +391,18 @@ def _test_result() -> int:
 
 
 def _command_location(args: argparse.Namespace) -> str:
-    if args.location:
-        return args.location
+    location = getattr(args, "location", None)
+    if location == "window" and os.environ.get("LAZYROS_ACTIVE") == "job":
+        raise UsageError("task windows cannot open nested task windows")
+    if location:
+        return location
     if os.environ.get("LAZYROS_ACTIVE") == "control":
         return "window"
     return "here"
+
+
+def _should_open_task_window(args: argparse.Namespace) -> bool:
+    return _command_location(args) == "window"
 
 
 def _run_ros_command(
@@ -332,6 +411,12 @@ def _run_ros_command(
 ) -> int:
     workspace = _workspace()
     runtime = _runtime_environment(workspace, os.environ)
+    if args.command == "run" and args.executable is None:
+        args.executable = _resolve_run_executable(
+            workspace,
+            runtime,
+            args.package,
+        )
     if args.command == "launch":
         if Path(args.launch_file).name != args.launch_file:
             raise UsageError("launch FILE must be a basename, not a path")
@@ -354,29 +439,47 @@ def _run_ros_command(
     return _run(process_argv, workspace, runtime)
 
 
+def _resolve_run_executable(
+    workspace: Workspace,
+    env: Mapping[str, str],
+    package: str,
+) -> str:
+    executables = CompletionCollector().collect_executables(workspace, env).get(package, ())
+    if not executables:
+        raise UsageError(f"package has no discoverable executable: {package}")
+    if len(executables) == 1:
+        return executables[0]
+    if not sys.stdin.isatty():
+        choices = ", ".join(executables)
+        raise UsageError(
+            f"package {package} has multiple executables; choose one: {choices}"
+        )
+    selected = _select_candidate(executables, prompt=f"{package} executable")
+    if selected is None:
+        raise UsageError("executable selection was cancelled")
+    return selected
+
+
 def _ros_command_argv(
     args: argparse.Namespace,
     passthrough: Sequence[str] = (),
 ) -> tuple[tuple[str, ...], str, tuple[str, ...]]:
-    forwarded = tuple(passthrough)
-    wrapper_separator = ("--", *forwarded) if forwarded else ()
+    forwarded = (*getattr(args, "arguments", ()), *passthrough)
     if args.command == "run":
         high_level = (
             "run",
-            "--here",
             args.package,
             args.executable,
-            *wrapper_separator,
+            *forwarded,
         )
         process = ("ros2", "run", args.package, args.executable, *forwarded)
         return high_level, f"{args.package}/{args.executable}", process
     if args.command == "launch":
         high_level = (
             "launch",
-            "--here",
             args.package,
             args.launch_file,
-            *wrapper_separator,
+            *forwarded,
         )
         process = ("ros2", "launch", args.package, args.launch_file, *forwarded)
         return high_level, f"{args.package}/{args.launch_file}", process
@@ -385,10 +488,9 @@ def _ros_command_argv(
     if args.config_file:
         rviz_arguments = ("-d", args.config_file, *rviz_arguments)
     high_level = (
-        "rviz",
-        "--here",
+        args.command,
         *((args.config_file,) if args.config_file else ()),
-        *wrapper_separator,
+        *forwarded,
     )
     process = ("rviz2", *rviz_arguments)
     return high_level, args.config_file or "rviz2", process
@@ -405,7 +507,8 @@ def _spawn_job(
     adapter = detect_terminal(os.environ, preferred=preferred)
     if adapter is None:
         raise LazyError(
-            "no supported graphical terminal is available; retry with --here"
+            "no supported graphical terminal is available; run the command "
+            "outside the Lazy control shell or use the native ROS/colcon command"
         )
 
     registry = _job_registry(paths)
@@ -450,7 +553,7 @@ def _spawn_job(
         registry.remove(workspace.root, job.number)
         raise LazyError(
             f"{adapter.name} failed to create the task window "
-            f"(exit {normalize_returncode(terminal_code)}); retry with --here"
+            f"(exit {normalize_returncode(terminal_code)})"
         )
 
     print(f"Started #{job.number:02d} in {adapter.name}: {job.kind} {job.target}")
@@ -679,10 +782,85 @@ def _safe_display(value: str) -> str:
     )
 
 
+def _select_candidate(
+    candidates: Sequence[str],
+    *,
+    prompt: str = "candidate",
+) -> str | None:
+    values = tuple(dict.fromkeys(candidates))
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    if os.name == "nt" or not Path("/dev/tty").exists():
+        return None
+
+    import select
+    import termios
+    import tty
+
+    index = 0
+    with open("/dev/tty", "r+b", buffering=0) as terminal:
+        descriptor = terminal.fileno()
+        previous = termios.tcgetattr(descriptor)
+
+        def write(value: str) -> None:
+            terminal.write(value.encode("utf-8", errors="replace"))
+
+        def read_more(timeout: float = 0.04) -> bytes:
+            readable, _, _ = select.select([descriptor], [], [], timeout)
+            return os.read(descriptor, 1) if readable else b""
+
+        try:
+            tty.setraw(descriptor)
+            while True:
+                display = _safe_display(values[index])
+                write(
+                    f"\r\033[2K{_safe_display(prompt)} "
+                    f"[{index + 1}/{len(values)}] {display}"
+                )
+                key = os.read(descriptor, 1)
+                if key in {b"\r", b"\n"}:
+                    return values[index]
+                if key in {b"\x03", b"\x04"}:
+                    return None
+                if key == b"\t":
+                    index = (index + 1) % len(values)
+                    continue
+                if key != b"\x1b":
+                    continue
+                second = read_more()
+                if not second:
+                    return None
+                if second != b"[":
+                    continue
+                third = read_more()
+                if third == b"A" or third == b"Z":
+                    index = (index - 1) % len(values)
+                elif third == b"B":
+                    index = (index + 1) % len(values)
+        finally:
+            termios.tcsetattr(descriptor, termios.TCSADRAIN, previous)
+            write("\r\033[2K")
+
+
+def _select_command(candidates: Sequence[str]) -> int:
+    values = tuple(candidates)
+    if values and values[0] == "--":
+        values = values[1:]
+    selected = _select_candidate(values)
+    if selected is None:
+        return 1
+    print(selected)
+    return 0
+
+
 def _window_title_target(kind: str, target: str) -> str:
     if kind in {"run", "launch"}:
         return target.split("/", 1)[0]
-    return "rviz2"
+    if kind in {"rviz", "rviz2"}:
+        return "rviz2"
+    return target
 
 
 def _run_job(job_id: str) -> int:
@@ -747,6 +925,10 @@ def _finish_job(job_id: str, pid: int, exit_code: int) -> int:
 
 def _list_jobs(number: str | None = None) -> int:
     workspace = _workspace()
+    return _print_jobs(workspace, number)
+
+
+def _print_jobs(workspace: Workspace, number: str | None = None) -> int:
     jobs = _job_registry(_xdg()).list(workspace.root)
     if number is not None:
         normalized = number.removeprefix("#")
@@ -767,6 +949,146 @@ def _list_jobs(number: str | None = None) -> int:
             f"{job.kind} {job.target}{exit_text}"
         )
     return 0
+
+
+def _jobs() -> int:
+    workspace = _workspace()
+    if _should_open_task_window(argparse.Namespace(location=None)):
+        return _spawn_job(workspace, ("jobs",), "tasks")
+    return _watch_jobs(workspace)
+
+
+def _watch_jobs(
+    workspace: Workspace,
+    *,
+    interval: float = 1.0,
+    max_iterations: int | None = None,
+) -> int:
+    iterations = 0
+    interactive = sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb"
+    while True:
+        if interactive:
+            print("\033[2J\033[H", end="")
+        _print_jobs(workspace)
+        iterations += 1
+        if max_iterations is not None and iterations >= max_iterations:
+            return 0
+        if not interactive:
+            return 0
+        time.sleep(interval)
+
+
+def _graph_command(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    domain = args.command
+    values = tuple(args.graph_args)
+    target = values[-1] if values else domain
+    if _should_open_task_window(args):
+        return _spawn_job(workspace, (domain, *values), target)
+    runtime = _runtime_environment(workspace, os.environ)
+    if not values:
+        return _watch_ros_list(workspace, runtime, domain)
+    return _run(("ros2", domain, *values), workspace, runtime)
+
+
+def _watch_ros_list(
+    workspace: Workspace,
+    env: Mapping[str, str],
+    domain: str,
+    *,
+    interval: float = 1.0,
+    max_iterations: int | None = None,
+) -> int:
+    iterations = 0
+    interactive = sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb"
+    command = ("ros2", domain, "list")
+    while True:
+        result = run_command(
+            command,
+            cwd=workspace.root,
+            env=env,
+            capture_output=True,
+        )
+        if interactive:
+            print("\033[2J\033[H", end="")
+        print(f"{domain} list · {time.strftime('%H:%M:%S')}")
+        output = result.stdout if result.exit_code == 0 else result.stderr
+        print(output.rstrip() or "(empty)")
+        iterations += 1
+        if result.exit_code != 0 or (
+            max_iterations is not None and iterations >= max_iterations
+        ):
+            return result.exit_code
+        if not interactive:
+            return 0
+        time.sleep(interval)
+
+
+def _bag(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    action = args.bag_action
+    if action == "record":
+        process = ("ros2", "bag", "record", *args.topics)
+        high_level = ("bag", "record", *args.topics)
+        target = "record"
+    elif action == "play":
+        topic_filter = ("--topics", *args.topics) if args.topics else ()
+        process = ("ros2", "bag", "play", args.bag, *topic_filter)
+        high_level = ("bag", "play", args.bag, *args.topics)
+        target = Path(args.bag).name
+    elif action == "info":
+        process = ("ros2", "bag", "info", args.bag)
+        high_level = ("bag", "info", args.bag)
+        target = Path(args.bag).name
+    else:
+        raise UsageError("bag requires record, play, or info")
+    if _should_open_task_window(args):
+        return _spawn_job(workspace, high_level, target)
+    runtime = _runtime_environment(workspace, os.environ)
+    return _run(process, workspace, runtime)
+
+
+def _workspace_list() -> int:
+    workspace = _workspace()
+    baseline = _load_baseline(os.environ)
+    for package in discover_packages(workspace, baseline):
+        print(package)
+    return 0
+
+
+def _pkg(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    runtime = _runtime_environment(workspace, os.environ)
+    if args.pkg_action == "list":
+        return _run(("ros2", "pkg", "list"), workspace, runtime)
+    if args.pkg_action != "create":
+        raise UsageError("pkg requires list or create")
+    build_type = {"python": "ament_python", "cpp": "ament_cmake"}[args.type]
+    dependencies = ("--dependencies", *args.dependencies) if args.dependencies else ()
+    command = (
+        "ros2",
+        "pkg",
+        "create",
+        args.name,
+        "--build-type",
+        build_type,
+        *dependencies,
+    )
+    return _run(command, workspace, runtime, cwd=workspace.src)
+
+
+def _interface(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    runtime = _runtime_environment(workspace, os.environ)
+    return _run(("ros2", "interface", "show", args.interface_type), workspace, runtime)
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    if _should_open_task_window(args):
+        return _spawn_job(workspace, (args.command,), "ROS")
+    runtime = _runtime_environment(workspace, os.environ)
+    return _run(("ros2", args.command), workspace, runtime)
 
 
 def _status() -> int:
@@ -946,13 +1268,35 @@ def _complete(args: argparse.Namespace) -> int:
         command = _completion_command(args)
         workspace = (
             _completion_workspace(deadline)
-            if command in {"build", "test", "run", "launch", "rviz", "jobs"}
+            if command
+            in {
+                "build",
+                "test",
+                "run",
+                "launch",
+                "rviz",
+                "rviz2",
+                "jobs",
+                "node",
+                "topic",
+                "service",
+                "action",
+                "param",
+                "bag",
+                "pkg",
+                "interface",
+            }
             else None
         )
-        data = _completion_data_for_command(
-            command,
-            workspace,
-            deadline=deadline,
+        data = (
+            CompletionData()
+            if command in {*GRAPH_COMMANDS, "bag", "pkg"}
+            and not _completion_needs_objects(args, command)
+            else _completion_data_for_command(
+                command,
+                workspace,
+                deadline=deadline,
+            )
         )
         candidates = _completion_candidates(args, data, workspace)
     except (
@@ -978,6 +1322,21 @@ def _completion_command(args: argparse.Namespace) -> str | None:
     if cursor <= 1 or len(words) <= 1:
         return None
     return words[1]
+
+
+def _completion_needs_objects(args: argparse.Namespace, command: str) -> bool:
+    words = list(args.words)
+    if words and words[0] == "--":
+        words.pop(0)
+    cursor = args.cursor if args.shell == "bash" else args.cursor - 1
+    before = words[2:cursor]
+    if command in GRAPH_COMMANDS:
+        return bool(before and before[0] in GRAPH_OBJECT_ACTIONS[command])
+    if command == "bag":
+        return bool(before and before[0] == "record")
+    if command == "pkg":
+        return bool(before and before[0] == "create" and len(before) >= 3)
+    return True
 
 
 def _completion_data_for_command(
@@ -1057,7 +1416,7 @@ def _completion_data_for_command(
                 raise
             return cached.data
         return refreshed.data
-    if command == "rviz":
+    if command in {"rviz", "rviz2"}:
         collector = CompletionCollector()
         return CompletionData(
             rviz_files=collector.collect_rviz_files(
@@ -1065,7 +1424,56 @@ def _completion_data_for_command(
                 deadline=deadline,
             )
         )
+    if command in {*GRAPH_COMMANDS, "bag", "pkg", "interface"}:
+        return CompletionData(
+            packages=_collect_completion_objects(command, workspace, deadline)
+        )
     return CompletionData()
+
+
+def _collect_completion_objects(
+    command: str,
+    workspace: Workspace,
+    deadline: float,
+) -> tuple[str, ...]:
+    if command == "interface":
+        argv = ("ros2", "interface", "list")
+    elif command == "pkg":
+        argv = ("ros2", "pkg", "list")
+    elif command in {"param", "node"}:
+        argv = ("ros2", "node", "list")
+    elif command == "bag":
+        argv = ("ros2", "topic", "list")
+    else:
+        argv = ("ros2", command, "list")
+    env = _runtime_environment(
+        workspace,
+        os.environ,
+        overlay_timeout=_completion_remaining(deadline),
+    )
+    result = run_command(
+        argv,
+        cwd=workspace.root,
+        env=env,
+        timeout=_completion_remaining(deadline),
+        capture_output=True,
+    )
+    if result.exit_code != 0:
+        detail = result.stderr.strip()
+        suffix = f": {detail}" if detail else ""
+        raise CompletionError(
+            f"{' '.join(argv)} failed with exit {result.exit_code}{suffix}",
+            exit_code=result.exit_code,
+        )
+    values = []
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if not value or value.endswith(":"):
+            continue
+        if command == "interface" and "/" not in value:
+            continue
+        values.append(value)
+    return tuple(sorted(set(values)))
 
 
 def _completion_remaining(deadline: float) -> float:
@@ -1099,9 +1507,15 @@ def _completion_candidates(
     if "--" in before:
         return ()
 
-    if command in {"build", "test"}:
-        options = ("--up-to",) if command == "build" else ()
-        return _prefix((*options, *data.packages), current)
+    if command == "build":
+        if not before:
+            return _prefix(("up-to", *data.packages), current)
+        selected = before[1:] if before[0] == "up-to" else before
+        remaining = tuple(package for package in data.packages if package not in selected)
+        return _prefix(remaining, current)
+    if command == "test":
+        remaining = tuple(package for package in data.packages if package not in before)
+        return _prefix(remaining, current)
     if command == "run":
         return _complete_target_command(
             before,
@@ -1112,17 +1526,24 @@ def _completion_candidates(
     if command == "launch":
         packages = tuple(sorted(set(data.launches) | set(data.ambiguous_launches)))
         return _complete_target_command(before, current, packages, data.launches)
-    if command == "rviz":
-        positionals = tuple(item for item in before if item not in {"--here", "--window"})
-        if positionals:
+    if command in {"rviz", "rviz2"}:
+        if before:
             return ()
-        return _prefix(("--here", "--window", *data.rviz_files), current)
+        return _prefix(data.rviz_files, current)
     if command == "jobs":
-        root = workspace.root if workspace is not None else _workspace().root
-        job_ids = tuple(
-            f"{job.number:02d}" for job in _job_registry(_xdg()).list(root)
-        )
-        return _prefix(job_ids, current)
+        return ()
+    if command in GRAPH_COMMANDS:
+        if not before:
+            return _prefix(GRAPH_ACTIONS[command], current)
+        if len(before) == 1 and before[0] in GRAPH_OBJECT_ACTIONS[command]:
+            return _prefix(data.packages, current)
+        return ()
+    if command == "bag":
+        return _complete_bag(before, current, data, workspace)
+    if command == "pkg":
+        return _complete_pkg(before, current, data)
+    if command == "interface":
+        return _prefix(data.packages, current) if not before else ()
     if command == "config":
         return _complete_config(before, current)
     if command == "help":
@@ -1136,12 +1557,100 @@ def _complete_target_command(
     packages: Sequence[str],
     targets: Mapping[str, Sequence[str]],
 ) -> tuple[str, ...]:
-    positionals = tuple(item for item in before if item not in {"--here", "--window"})
-    if not positionals:
-        return _prefix(("--here", "--window", *packages), current)
-    if len(positionals) == 1:
-        return _prefix(targets.get(positionals[0], ()), current)
+    if not before:
+        return _prefix(packages, current)
+    if len(before) == 1:
+        return _prefix(targets.get(before[0], ()), current)
     return ()
+
+
+def _complete_bag(
+    before: Sequence[str],
+    current: str,
+    data: CompletionData,
+    workspace: Workspace | None,
+) -> tuple[str, ...]:
+    if not before:
+        return _prefix(("record", "play", "info"), current)
+    action = before[0]
+    if action == "record":
+        selected = set(before[1:])
+        return _prefix(tuple(item for item in data.packages if item not in selected), current)
+    if action in {"play", "info"} and len(before) == 1:
+        return _prefix(_bag_paths(workspace), current)
+    if action == "play" and len(before) >= 2:
+        selected = set(before[2:])
+        topics = tuple(
+            topic
+            for topic in _bag_topics_from_metadata(workspace, before[1])
+            if topic not in selected
+        )
+        return _prefix(topics, current)
+    return ()
+
+
+def _bag_paths(workspace: Workspace | None) -> tuple[str, ...]:
+    if workspace is None:
+        return ()
+    values: set[str] = set()
+    for metadata in workspace.root.rglob("metadata.yaml"):
+        try:
+            relative = metadata.parent.relative_to(workspace.root)
+        except ValueError:
+            continue
+        values.add(relative.as_posix())
+    for pattern in ("*.db3", "*.mcap"):
+        for bag_file in workspace.root.rglob(pattern):
+            try:
+                values.add(bag_file.relative_to(workspace.root).as_posix())
+            except ValueError:
+                continue
+    return tuple(sorted(values))
+
+
+def _bag_topics_from_metadata(
+    workspace: Workspace | None,
+    bag: str,
+) -> tuple[str, ...]:
+    if workspace is None or not bag or "\0" in bag:
+        return ()
+    candidate = (workspace.root / bag).resolve()
+    try:
+        candidate.relative_to(workspace.root)
+    except ValueError:
+        return ()
+    metadata = (
+        candidate / "metadata.yaml"
+        if candidate.is_dir()
+        else candidate.parent / "metadata.yaml"
+    )
+    try:
+        content = metadata.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    topics = {
+        match.group(1).strip(" '\"")
+        for match in re.finditer(r"^\s*name:\s*(.+?)\s*$", content, flags=re.MULTILINE)
+        if match.group(1).strip(" '\"").startswith("/")
+    }
+    return tuple(sorted(topics))
+
+
+def _complete_pkg(
+    before: Sequence[str],
+    current: str,
+    data: CompletionData,
+) -> tuple[str, ...]:
+    if not before:
+        return _prefix(("list", "create"), current)
+    if before[0] != "create":
+        return ()
+    if len(before) == 1:
+        return ()
+    if len(before) == 2:
+        return _prefix(("python", "cpp"), current)
+    selected = set(before[3:])
+    return _prefix(tuple(package for package in data.packages if package not in selected), current)
 
 
 def _complete_config(before: Sequence[str], current: str) -> tuple[str, ...]:
@@ -1279,6 +1788,11 @@ def _about() -> int:
     return 0
 
 
+def _version_command() -> int:
+    print(f"lazy {_version()}")
+    return 0
+
+
 def _setup_path(shell_name: str) -> int:
     setup = validated_setup_script(_workspace(), shell_name)
     if setup is not None:
@@ -1300,11 +1814,29 @@ def _split_passthrough(argv: Sequence[str]) -> tuple[list[str], tuple[str, ...]]
         if not value.startswith("-"):
             command = value
             break
-    passthrough_commands = {"build", "test", "run", "launch", "rviz"}
+    passthrough_commands = {"build", "test", "run", "launch", "rviz", "rviz2"}
     if command not in passthrough_commands or "--" not in values:
         return values, ()
     index = values.index("--")
     return values[:index], tuple(values[index + 1 :])
+
+
+def _add_legacy_location_arguments(parser: argparse.ArgumentParser) -> None:
+    location = parser.add_mutually_exclusive_group()
+    location.add_argument(
+        "--window",
+        dest="location",
+        action="store_const",
+        const="window",
+        help=argparse.SUPPRESS,
+    )
+    location.add_argument(
+        "--here",
+        dest="location",
+        action="store_const",
+        const="here",
+        help=argparse.SUPPRESS,
+    )
 
 
 def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
@@ -1316,8 +1848,9 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
             "examples:\n"
             "  cd ~/robot_ws && lazy\n"
             "  lazy build my_package\n"
-            "  lazy run --here my_package my_node -- --ros-args\n"
-            "  lazy launch my_package bringup.launch.py -- use_sim:=true"
+            "  lazy build up-to my_package\n"
+            "  lazy run my_package my_node --ros-args\n"
+            "  lazy launch my_package bringup.launch.py use_sim:=true"
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
@@ -1326,7 +1859,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     command_parsers: dict[str, argparse.ArgumentParser] = {}
 
     build = commands.add_parser("build", help="Build all or selected workspace packages.")
-    build.add_argument("--up-to", action="store_true")
+    build.add_argument("--up-to", dest="legacy_up_to", action="store_true", help=argparse.SUPPRESS)
     build.add_argument("packages", nargs="*")
     command_parsers["build"] = build
 
@@ -1337,36 +1870,34 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
         "test-result", help="Show the latest verbose colcon test results."
     )
 
-    for name in ("run", "launch"):
-        child = commands.add_parser(
-            name,
-            help=(
-                "Run a package executable."
-                if name == "run"
-                else "Launch an installed package launch file."
-            ),
-        )
-        location = child.add_mutually_exclusive_group()
-        location.add_argument("--window", dest="location", action="store_const", const="window")
-        location.add_argument("--here", dest="location", action="store_const", const="here")
-        child.add_argument("package")
-        child.add_argument("executable" if name == "run" else "launch_file")
-        command_parsers[name] = child
+    run = commands.add_parser("run", help="Run a package executable.")
+    _add_legacy_location_arguments(run)
+    run.add_argument("package")
+    run.add_argument("executable", nargs="?")
+    run.add_argument("arguments", nargs=argparse.REMAINDER)
+    command_parsers["run"] = run
 
-    rviz = commands.add_parser("rviz", help="Open RViz, optionally with a config file.")
-    location = rviz.add_mutually_exclusive_group()
-    location.add_argument("--window", dest="location", action="store_const", const="window")
-    location.add_argument("--here", dest="location", action="store_const", const="here")
-    rviz.add_argument("config_file", nargs="?")
-    command_parsers["rviz"] = rviz
+    launch = commands.add_parser("launch", help="Launch an installed package launch file.")
+    _add_legacy_location_arguments(launch)
+    launch.add_argument("package")
+    launch.add_argument("launch_file")
+    launch.add_argument("arguments", nargs=argparse.REMAINDER)
+    command_parsers["launch"] = launch
 
-    jobs = commands.add_parser("jobs", help="List LazyROS2 task windows.")
-    jobs.add_argument("number", nargs="?")
-    command_parsers["jobs"] = jobs
+    for name in ("rviz", "rviz2"):
+        rviz = commands.add_parser(name, help="Open RViz 2, optionally with a config file.")
+        _add_legacy_location_arguments(rviz)
+        rviz.add_argument("config_file", nargs="?")
+        command_parsers[name] = rviz
+
+    command_parsers["jobs"] = commands.add_parser(
+        "jobs", help="Open a live view of LazyROS2 task windows."
+    )
     simple_help = {
         "status": "Show workspace, ROS, terminal, task, and cache status.",
         "refresh": "Refresh ROS-aware completion data.",
         "about": "Show version, copyright, license, and source.",
+        "version": "Show the LazyROS2 version.",
         "exit": "Exit a LazyROS2 control shell.",
     }
     for name, description in simple_help.items():
@@ -1403,10 +1934,49 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     uninstall.add_argument("--force", action="store_true")
     command_parsers["uninstall"] = uninstall
 
+    for name in GRAPH_COMMANDS:
+        graph = commands.add_parser(name, help=f"Inspect ROS 2 {name} data.")
+        graph.add_argument("graph_args", nargs=argparse.REMAINDER)
+        command_parsers[name] = graph
+
+    bag = commands.add_parser("bag", help="Record, play, or inspect rosbag data.")
+    bag_actions = bag.add_subparsers(dest="bag_action")
+    bag_record = bag_actions.add_parser("record")
+    bag_record.add_argument("topics", nargs="+")
+    bag_play = bag_actions.add_parser("play")
+    bag_play.add_argument("bag")
+    bag_play.add_argument("topics", nargs="*")
+    bag_info = bag_actions.add_parser("info")
+    bag_info.add_argument("bag")
+    command_parsers["bag"] = bag
+
+    command_parsers["list"] = commands.add_parser(
+        "list", help="List packages in the current workspace."
+    )
+    pkg = commands.add_parser("pkg", help="List or create ROS 2 packages.")
+    pkg_actions = pkg.add_subparsers(dest="pkg_action")
+    pkg_actions.add_parser("list")
+    pkg_create = pkg_actions.add_parser("create")
+    pkg_create.add_argument("name")
+    pkg_create.add_argument("type", choices=("python", "cpp"))
+    pkg_create.add_argument("dependencies", nargs="*")
+    command_parsers["pkg"] = pkg
+
+    interface = commands.add_parser("interface", help="Show a ROS 2 interface definition.")
+    interface.add_argument("interface_type")
+    command_parsers["interface"] = interface
+
+    for name in ("doctor", "wtf"):
+        doctor = commands.add_parser(name, help="Run the ROS 2 doctor in a task window.")
+        _add_legacy_location_arguments(doctor)
+        command_parsers[name] = doctor
+
     complete = commands.add_parser("__complete")
     complete.add_argument("--shell", required=True, choices=("bash", "zsh"))
     complete.add_argument("--cursor", required=True, type=int)
     complete.add_argument("words", nargs=argparse.REMAINDER)
+    select_candidate = commands.add_parser("__select")
+    select_candidate.add_argument("candidates", nargs=argparse.REMAINDER)
     job_shell = commands.add_parser("__job-shell")
     job_shell.add_argument("job_id")
     job_shell.add_argument("--shell", required=True, choices=("bash", "zsh"))
@@ -1432,7 +2002,7 @@ def _dispatch(
 ) -> int:
     if args.command is None:
         return _start_controller(args.shell or _current_shell())
-    if passthrough and args.command not in {"build", "test", "run", "launch", "rviz"}:
+    if passthrough and args.command not in {"build", "test", "run", "launch", "rviz", "rviz2"}:
         raise UsageError(f"{args.command} does not accept arguments after --")
     if args.command == "build":
         return _build(args, passthrough)
@@ -1440,10 +2010,10 @@ def _dispatch(
         return _test(args, passthrough)
     if args.command == "test-result":
         return _test_result()
-    if args.command in {"run", "launch", "rviz"}:
+    if args.command in {"run", "launch", "rviz", "rviz2"}:
         return _run_ros_command(args, passthrough)
     if args.command == "jobs":
-        return _list_jobs(args.number)
+        return _jobs()
     if args.command == "status":
         return _status()
     if args.command == "refresh":
@@ -1452,16 +2022,32 @@ def _dispatch(
         return _config(args)
     if args.command == "about":
         return _about()
+    if args.command == "version":
+        return _version_command()
     if args.command == "help":
         selected = command_parsers.get(args.topic)
         (selected or parser).print_help()
         return 0 if selected or args.topic is None else 2
     if args.command == "uninstall":
         return _uninstall(args)
+    if args.command in GRAPH_COMMANDS:
+        return _graph_command(args)
+    if args.command == "bag":
+        return _bag(args)
+    if args.command == "list":
+        return _workspace_list()
+    if args.command == "pkg":
+        return _pkg(args)
+    if args.command == "interface":
+        return _interface(args)
+    if args.command in {"doctor", "wtf"}:
+        return _doctor(args)
     if args.command == "exit":
         raise UsageError("exit is available only inside the LazyROS2 control shell")
     if args.command == "__complete":
         return _complete(args)
+    if args.command == "__select":
+        return _select_command(args.candidates)
     if args.command == "__job-shell":
         return _start_job_shell(args.job_id, args.shell)
     if args.command == "__job-run":

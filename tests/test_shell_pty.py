@@ -526,6 +526,10 @@ case ${1-} in
         esac
         exit 0
         ;;
+    __select)
+        PYTHONPATH="$LAZYROS_TEST_SOURCE" \
+            exec "$LAZYROS_TEST_PYTHON" -m lazyros2 "$@"
+        ;;
     *)
         printf 'EXEC:%s\\n' "$*"
         exit 0
@@ -555,6 +559,8 @@ esac
                 "ZDOTDIR": str(zdotdir),
                 "LAZYROS_HISTORY_FILE": str(history),
                 "LAZYROS_TEST_COMPLETION_MODE": str(mode_file),
+                "LAZYROS_TEST_PYTHON": sys.executable,
+                "LAZYROS_TEST_SOURCE": str(ROOT / "src"),
                 "LAZYROS_WORKSPACE": str(workspace),
             }
         )
@@ -595,9 +601,11 @@ esac
                         self.assertNotIn(b"alpha", child.output[start:])
                         self.assertNotIn(b"beta", child.output[start:])
                         child.send(b"\t")
-                        child.expect(b"alpha")
-                        child.expect(b"beta")
-                        child.send(b"\x15exit\r")
+                        child.expect(b"[1/2] alpha")
+                        child.send(b"\x1b[B\r\r")
+                        child.expect(b"EXEC:beta")
+                        child.expect(self.PROMPT)
+                        child.send(b"exit\r")
                         self.assertEqual(child.wait(), 0, bytes(child.output))
 
     def test_common_prefix_and_zero_candidate_edit_reset_listing(self) -> None:
@@ -612,10 +620,9 @@ esac
                 self.assertNotIn(b"alpha", segment)
                 self.assertNotIn(b"alpine", segment)
                 child.send(b"\t")
-                child.expect(b"alpha")
-                child.expect(b"alpine")
-                child.send(b"\r")
-                child.expect(b"EXEC:alp")
+                child.expect(b"[1/2] alpha")
+                child.send(b"\r\r")
+                child.expect(b"EXEC:alpha")
                 child.expect(self.PROMPT)
 
                 self._mode(mode, "many")
@@ -631,9 +638,8 @@ esac
                 self.assertNotIn(b"alpha", child.output[start:])
                 self.assertNotIn(b"beta", child.output[start:])
                 child.send(b"\t")
-                child.expect(b"alpha")
-                child.expect(b"beta")
-                child.send(b"\x15exit\r")
+                child.expect(b"[1/2] alpha")
+                child.send(b"\x03\x15exit\r")
                 self.assertEqual(child.wait(), 0, bytes(child.output))
 
     def test_cursor_movement_resets_the_lazy_completion_repeat(self) -> None:
@@ -650,9 +656,8 @@ esac
                 self.assertNotIn(b"alpha", child.output[start:])
                 self.assertNotIn(b"alpine", child.output[start:])
                 child.send(b"\t")
-                child.expect(b"alpha")
-                child.expect(b"alpine")
-                child.send(b"\x15exit\r")
+                child.expect(b"[1/2] alpha")
+                child.send(b"\x03\x15exit\r")
                 self.assertEqual(child.wait(), 0, bytes(child.output))
 
     def test_unique_completion_advancing_argument_resets_double_tab_state(self) -> None:
@@ -671,10 +676,109 @@ esac
                 self.assertNotIn(b"alpine", child.output[start:])
 
                 child.send(b"\t")
-                child.expect(b"alpha")
-                child.expect(b"alpine")
-                child.send(b"\r")
-                child.expect(b"EXEC:build alp")
+                child.expect(b"[1/2] alpha")
+                child.send(b"\r\r")
+                child.expect(b"EXEC:build alpha")
+                child.expect(self.PROMPT)
+                child.send(b"exit\r")
+                self.assertEqual(child.wait(), 0, bytes(child.output))
+
+
+@unittest.skipUnless(os.name == "posix" and pty is not None, "requires POSIX PTYs")
+class BashCompletionPtyTests(unittest.TestCase):
+    PROMPT = b"BCOMP> "
+
+    def _spawn(self, temp_path: Path, integration: str) -> PtyShell:
+        shell = shutil.which("bash")
+        if shell is None:
+            self.skipTest("bash is not installed")
+        workspace = temp_path / "robot_ws"
+        (workspace / "src").mkdir(parents=True)
+        home = temp_path / "home"
+        home.mkdir()
+        history = temp_path / "history"
+        history.touch()
+        fake_bin = temp_path / "bin"
+        fake_bin.mkdir()
+        fake_lazy = fake_bin / "lazy"
+        fake_lazy.write_text(
+            """#!/bin/sh
+case ${1-} in
+    __setup-path)
+        exit 0
+        ;;
+    __complete)
+        printf 'alpha\nbeta\n'
+        exit 0
+        ;;
+    __select)
+        PYTHONPATH="$LAZYROS_TEST_SOURCE" \
+            exec "$LAZYROS_TEST_PYTHON" -m lazyros2 "$@"
+        ;;
+    *)
+        printf 'EXEC:%s\n' "$*"
+        exit 0
+        ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        fake_lazy.chmod(0o755)
+        integration_script = ROOT / "shell" / f"lazy-{integration}.bash"
+        rcfile = temp_path / "bashrc"
+        rcfile.write_text(
+            f"source {shlex.quote(str(integration_script))}\n"
+            "PS1='BCOMP> '\n",
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env.update(
+            {
+                "HOME": str(home),
+                "PATH": str(fake_bin) + os.pathsep + env.get("PATH", ""),
+                "TERM": "xterm-256color",
+                "NO_COLOR": "1",
+                "LAZYROS_HISTORY_FILE": str(history),
+                "LAZYROS_TEST_PYTHON": sys.executable,
+                "LAZYROS_TEST_SOURCE": str(ROOT / "src"),
+                "LAZYROS_WORKSPACE": str(workspace),
+            }
+        )
+        child = PtyShell(
+            [str(Path(shell).resolve()), "--noprofile", "--rcfile", str(rcfile), "-i"],
+            cwd=workspace,
+            env=env,
+        )
+        child.expect(self.PROMPT)
+        return child
+
+    def test_second_tab_uses_arrow_candidate_picker(self) -> None:
+        for integration in ("init", "control"):
+            with self.subTest(integration=integration):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    child = self._spawn(Path(temp_dir), integration)
+                    with child:
+                        start = len(child.output)
+                        child.send(b"lazy \t")
+                        child.read_for(0.2)
+                        self.assertNotIn(b"alpha", child.output[start:])
+                        self.assertNotIn(b"beta", child.output[start:])
+                        child.send(b"\t")
+                        child.expect(b"[1/2] alpha")
+                        child.send(b"\x1b[B\r\r")
+                        child.expect(b"EXEC:beta")
+                        child.expect(self.PROMPT)
+                        child.send(b"exit\r")
+                        self.assertEqual(child.wait(), 0, bytes(child.output))
+
+    def test_typing_resets_repeat_and_reuses_current_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            child = self._spawn(Path(temp_dir), "control")
+            with child:
+                child.send(b"lazy \t")
+                child.read_for(0.2)
+                child.send(b"a\t\r")
+                child.expect(b"EXEC:alpha")
                 child.expect(self.PROMPT)
                 child.send(b"exit\r")
                 self.assertEqual(child.wait(), 0, bytes(child.output))

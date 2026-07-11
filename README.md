@@ -21,7 +21,7 @@ LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available w
 
 ## Highlights
 
-- Complete workspace packages, executables, launch files, RViz configs, and jobs.
+- Complete workspace packages, executables, launch files, RViz configs, graph objects, bags, and jobs.
 - Build one package without retyping long selection flags.
 - Run ROS processes in numbered, color-coded task windows.
 - Press Ctrl+C, then Up and Enter to start a task again.
@@ -44,7 +44,7 @@ LazyROS2 does not currently stack multiple overlays inside one instance. One ins
 ## Install
 
 ```sh
-git clone --branch v0.1.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
+git clone --branch v0.2.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
 cd LazyROS2
 sh install.sh
 ```
@@ -57,20 +57,22 @@ Open a new terminal after installation. LazyROS2 never installs or modifies ROS 
 $ cd ~/robot_ws
 $ lazy
 [lazy:robot_ws | ros:jazzy] $ build my_robot
+[lazy:robot_ws | ros:jazzy] $ build up-to navigation_bringup
 [lazy:robot_ws | ros:jazzy] $ test my_robot
 [lazy:robot_ws | ros:jazzy] $ run my_robot controller
 [lazy:robot_ws | ros:jazzy] $ launch my_robot bringup.launch.py
 [lazy:robot_ws | ros:jazzy] $ rviz config/navigation.rviz
 [lazy:robot_ws | ros:jazzy] $ jobs
+[lazy:robot_ws | ros:jazzy] $ topic
 ```
 
-Use `help COMMAND` for exact syntax. `run`, `launch`, and `rviz` open task windows from the control shell by default; pass `--here` to keep a command in the current terminal.
+Use `help COMMAND` for exact syntax. Build, test, run, launch, RViz, live graph views, and jobs use persistent task windows from the control shell. Press Tab once to complete a prefix; press it again to choose with the arrow keys.
 
 For scripts and CI, skip the control shell:
 
 ```sh
 lazy build my_robot
-lazy run --here my_robot controller
+lazy run my_robot controller
 ```
 
 ## Support
@@ -82,13 +84,14 @@ lazy run --here my_robot controller
 | Ubuntu 26.04 | Lyrical | 3.14 | Supported |
 | Fedora 44 | Jazzy with micromamba | Distribution environment | Experimental |
 
-Bash and zsh are supported on x86_64. arm64 is best-effort. Windows, macOS, PowerShell, and multi-overlay stacks are outside the v0.1 scope.
+Bash and zsh are supported on x86_64. arm64 is best-effort and smoke-tested on Ubuntu 22.04 with ROS 2 Humble. Windows, macOS, PowerShell, and multi-overlay stacks are outside the v0.2 scope.
 
 ## Documentation
 
 - [Command reference](docs/commands.md)
 - [Install and uninstall](docs/install-layout.md)
 - [Validation matrix](docs/validation.md)
+- [Jetson Humble smoke report](docs/jetson-humble-smoke-2026-07-11.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
