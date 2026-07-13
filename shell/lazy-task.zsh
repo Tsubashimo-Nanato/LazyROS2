@@ -177,14 +177,20 @@ if [[ ${LAZYROS_JOB_NUMBER:-} =~ '^[0-9]{1,9}$' ]]; then
 else
     _lazyros_job_label=${LAZYROS_JOB_ID//[^[:alnum:]_.-]/?}
 fi
-_lazyros_ros_label=${ROS_DISTRO:-none}
+_lazyros_ros_label=${ROS_DISTRO:-}
 _lazyros_ros_label=${_lazyros_ros_label//[^[:alnum:]_.-]/?}
+_lazyros_ros_segment=${_lazyros_ros_label:+ | ros:${_lazyros_ros_label}}
+_lazyros_prompt_spacing()
+{
+    print
+}
+precmd_functions+=(_lazyros_prompt_spacing)
 if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR+x} ]]; then
-    PROMPT="%F{110}[lazy job #${_lazyros_job_label} | ros:${_lazyros_ros_label}]%f %~%# "
+    PROMPT="%F{110}[lazy job #${_lazyros_job_label}${_lazyros_ros_segment}]%f %~%# "
 else
-    PROMPT="[lazy job #${_lazyros_job_label} | ros:${_lazyros_ros_label}] %~%# "
+    PROMPT="[lazy job #${_lazyros_job_label}${_lazyros_ros_segment}] %~%# "
 fi
-unset _lazyros_job_label _lazyros_ros_label
+unset _lazyros_job_label _lazyros_ros_label _lazyros_ros_segment
 
 if ! builtin cd -- "$LAZYROS_WORKSPACE"; then
     print -u2 -r -- "lazy: cannot enter workspace: $LAZYROS_WORKSPACE"

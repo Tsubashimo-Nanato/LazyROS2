@@ -176,14 +176,20 @@ if [[ ${LAZYROS_JOB_NUMBER:-} =~ ^[0-9]{1,9}$ ]]; then
 else
     _lazyros_job_label=${LAZYROS_JOB_ID//[^[:alnum:]_.-]/?}
 fi
-_lazyros_ros_label=${ROS_DISTRO:-none}
+_lazyros_ros_label=${ROS_DISTRO:-}
 _lazyros_ros_label=${_lazyros_ros_label//[^[:alnum:]_.-]/?}
+_lazyros_ros_segment=${_lazyros_ros_label:+ | ros:${_lazyros_ros_label}}
+_lazyros_prompt_spacing()
+{
+    printf '\n'
+}
+PROMPT_COMMAND=_lazyros_prompt_spacing
 if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR+x} ]]; then
-    PS1="\[\033[38;5;110m\][lazy job #${_lazyros_job_label} | ros:${_lazyros_ros_label}]\[\033[0m\] \w\\$ "
+    PS1="\[\033[38;5;110m\][lazy job #${_lazyros_job_label}${_lazyros_ros_segment}]\[\033[0m\] \w\\$ "
 else
-    PS1="[lazy job #${_lazyros_job_label} | ros:${_lazyros_ros_label}] \w\\$ "
+    PS1="[lazy job #${_lazyros_job_label}${_lazyros_ros_segment}] \w\\$ "
 fi
-unset _lazyros_job_label _lazyros_ros_label
+unset _lazyros_job_label _lazyros_ros_label _lazyros_ros_segment
 
 if ! builtin cd -- "$LAZYROS_WORKSPACE"; then
     printf 'lazy: cannot enter workspace: %s\n' "$LAZYROS_WORKSPACE" >&2

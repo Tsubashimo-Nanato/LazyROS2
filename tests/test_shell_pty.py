@@ -526,6 +526,10 @@ case ${1-} in
         esac
         exit 0
         ;;
+    help)
+        printf 'OPTIONS:%s\\n' "$*"
+        exit 0
+        ;;
     *)
         printf 'EXEC:%s\\n' "$*"
         exit 0
@@ -597,6 +601,20 @@ esac
                         child.send(b"\t")
                         child.expect(b"alpha")
                         child.expect(b"beta")
+                        child.send(b"\x15exit\r")
+                        self.assertEqual(child.wait(), 0, bytes(child.output))
+
+    def test_double_tab_shows_contextual_help_for_nested_package_create(self) -> None:
+        for integration in ("init", "control"):
+            with self.subTest(integration=integration):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    child, mode = self._spawn(Path(temp_dir), integration)
+                    with child:
+                        self._mode(mode, "many")
+                        child.send(b"lazy pkg create \t")
+                        child.read_for(0.2)
+                        child.send(b"\t")
+                        child.expect(b"OPTIONS:help pkg create")
                         child.send(b"\x15exit\r")
                         self.assertEqual(child.wait(), 0, bytes(child.output))
 

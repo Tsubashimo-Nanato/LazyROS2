@@ -106,7 +106,8 @@ class CliParserTests(unittest.TestCase):
 
         self.assertEqual(workspace.root, root.resolve())
         self.assertIn("Hello from LazyROS2", stdout.getvalue())
-        self.assertIn("Use recognized workspace", prompt.call_args.args[0])
+        self.assertIn("Workspace detected", stdout.getvalue())
+        self.assertIn("Use this workspace", prompt.call_args.args[0])
 
     def test_standalone_creates_empty_workspace_after_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -116,25 +117,29 @@ class CliParserTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
                 cli.sys, "stdin", stdin
             ), mock.patch.object(cli, "_workspace_probe", return_value=()), mock.patch(
-                "builtins.input", return_value="yes"
+                "builtins.input", side_effect=["c", "yes"]
             ), contextlib.redirect_stdout(io.StringIO()):
                 workspace = cli._standalone_workspace()
 
             self.assertEqual(workspace.root, root.resolve())
             self.assertTrue((root / "src").is_dir())
 
-    def test_standalone_explains_odd_layout_without_modifying_it(self) -> None:
+    def test_standalone_reports_fix_and_can_quit_without_modifying_odd_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "notes.txt").write_text("not a workspace", encoding="utf-8")
             stdout = io.StringIO()
             with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
                 cli, "_workspace_probe", return_value=()
-            ), mock.patch("builtins.input", side_effect=AssertionError("must not prompt")), contextlib.redirect_stdout(stdout):
+            ), mock.patch.object(cli.sys, "stdin", mock.Mock(isatty=mock.Mock(return_value=True))), mock.patch(
+                "builtins.input", return_value="q"
+            ), contextlib.redirect_stdout(stdout):
                 workspace = cli._standalone_workspace()
 
             self.assertIsNone(workspace)
-            self.assertIn("unrecognized layout", stdout.getvalue())
+            self.assertIn("Workspace not detected", stdout.getvalue())
+            self.assertIn("Possible fix", stdout.getvalue())
+            self.assertIn("No files were changed", stdout.getvalue())
             self.assertFalse((root / "src").exists())
 
     def test_standalone_can_complete_generated_only_workspace(self) -> None:
@@ -148,13 +153,45 @@ class CliParserTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
                 cli.sys, "stdin", stdin
             ), mock.patch.object(cli, "_workspace_probe", return_value=()), mock.patch(
-                "builtins.input", return_value="y"
+                "builtins.input", side_effect=["c", "y"]
             ), contextlib.redirect_stdout(stdout):
                 workspace = cli._standalone_workspace()
 
             self.assertEqual(workspace.root, root.resolve())
             self.assertTrue((root / "src").is_dir())
-            self.assertIn("generated workspace directories", stdout.getvalue())
+            self.assertIn("Data erased: none", stdout.getvalue())
+
+    def test_standalone_accepts_a_different_detected_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "wrong"
+            second = Path(temp_dir) / "robot_ws"
+            first.mkdir()
+            (second / "src").mkdir(parents=True)
+            stdin = mock.Mock()
+            stdin.isatty.return_value = True
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(first)}), mock.patch.object(
+                cli.sys, "stdin", stdin
+            ), mock.patch.object(cli, "_workspace_probe", return_value=()), mock.patch(
+                "builtins.input", side_effect=["d", str(second), "y"]
+            ), contextlib.redirect_stdout(stdout):
+                workspace = cli._standalone_workspace()
+
+        self.assertEqual(workspace.root, second.resolve())
+        self.assertIn("Workspace detected", stdout.getvalue())
+        self.assertIn(f"Directory: {second.resolve()}", stdout.getvalue())
+
+    def test_styled_uses_color_only_for_a_tty_and_honors_no_color(self) -> None:
+        stdout = mock.Mock()
+        stdout.isatty.return_value = True
+        with mock.patch.object(cli.sys, "stdout", stdout), mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            self.assertIn("\033[32m", cli._styled("ready", "green"))
+        with mock.patch.object(cli.sys, "stdout", stdout), mock.patch.dict(
+            os.environ, {"NO_COLOR": "1"}, clear=True
+        ):
+            self.assertEqual(cli._styled("ready", "green"), "ready")
 
     def test_usage_failures_return_two(self) -> None:
         stderr = io.StringIO()
@@ -180,6 +217,65 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("examples:", rendered)
         self.assertNotIn("__job-run", rendered)
         self.assertNotIn("__complete", rendered)
+
+    def test_question_mark_routes_to_general_help(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(cli.main(["?"]), 0)
+        self.assertIn("examples:", stdout.getvalue())
+
+    def test_trailing_question_mark_routes_to_command_help(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(cli.main(["build", "?"]), 0)
+        self.assertIn("usage: lazy build", stdout.getvalue())
+
+    def test_create_is_listed_and_has_contextual_help(self) -> None:
+        general = io.StringIO()
+        contextual = io.StringIO()
+        with contextlib.redirect_stdout(general):
+            self.assertEqual(cli.main(["?"]), 0)
+        with contextlib.redirect_stdout(contextual):
+            self.assertEqual(cli.main(["create", "pkg", "?"]), 0)
+        self.assertIn("create", general.getvalue())
+        self.assertIn("usage: lazy create package", contextual.getvalue())
+        self.assertIn("LANGUAGE", contextual.getvalue())
+        self.assertIn("DEPENDENCY", contextual.getvalue())
+
+    def test_create_aliases_parse_without_flags(self) -> None:
+        parser, _ = cli._build_parser()
+        for entity in cli.CREATE_ENTITIES:
+            for language in cli.CREATE_LANGUAGE_TYPES:
+                with self.subTest(entity=entity, language=language):
+                    args = parser.parse_args(["create", entity, language, "hello_world"])
+                    self.assertIn(args.create_entity, cli.CREATE_ENTITIES)
+                    self.assertEqual(args.language, language)
+                    self.assertEqual(args.package_name, "hello_world")
+
+    def test_nested_help_supports_both_create_orders(self) -> None:
+        for values in (
+            ["help", "create", "package"],
+            ["create", "pkg", "?"],
+            ["help", "pkg", "create"],
+            ["pkg", "create", "?"],
+        ):
+            with self.subTest(values=values):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(cli.main(values), 0)
+                self.assertIn("DEPENDENCY", stdout.getvalue())
+
+    def test_test_help_merges_test_and_test_result(self) -> None:
+        for values in (["test", "?"], ["help", "test"]):
+            with self.subTest(values=values):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(cli.main(values), 0)
+                rendered = stdout.getvalue()
+                self.assertIn("test command", rendered)
+                self.assertIn("usage: lazy test ", rendered)
+                self.assertIn("test-result command", rendered)
+                self.assertIn("usage: lazy test-result", rendered)
 
 
 class CliCommandTests(unittest.TestCase):
@@ -222,6 +318,155 @@ class CliCommandTests(unittest.TestCase):
         ), mock.patch.object(cli, "_run", side_effect=(7, 9)) as run:
             self.assertEqual(cli._test(args, ()), 7)
         self.assertEqual(run.call_count, 2)
+
+    def test_create_package_runs_ros2_pkg_create_in_workspace_src(self) -> None:
+        args = argparse.Namespace(
+            command="create",
+            create_entity="pkg",
+            package_name="demo_nodes",
+            language="python",
+            dependencies=("rclpy", "std_msgs"),
+        )
+        result = mock.Mock(returncode=0, exit_code=0, stderr="")
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli, "_runtime_environment", return_value={}
+        ), mock.patch.object(
+            cli, "_known_dependency_packages", return_value=({"rclpy", "std_msgs"}, None)
+        ), mock.patch.object(cli, "run_command", return_value=result) as run, mock.patch.object(
+            cli, "_mark_completion_dirty"
+        ) as dirty:
+            self.assertEqual(cli._create_package(args), 0)
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:5], ["ros2", "pkg", "create", "--build-type", "ament_python"])
+        self.assertIn("demo_nodes", command)
+        self.assertEqual(run.call_args.kwargs["cwd"], self.workspace.src)
+        dirty.assert_called_once()
+
+    def test_create_prompts_for_missing_essentials_and_optional_dependencies(self) -> None:
+        args = argparse.Namespace(
+            command="create", create_entity=None, language=None, package_name=None, dependencies=()
+        )
+        stdin = mock.Mock()
+        stdin.isatty.return_value = True
+        result = mock.Mock(returncode=0, exit_code=0, stderr="")
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli.sys, "stdin", stdin
+        ), mock.patch("builtins.input", side_effect=["pkg", "py", "hello_world", "rclpy std_msgs"]), mock.patch.object(
+            cli, "_runtime_environment", return_value={}
+        ), mock.patch.object(
+            cli, "_known_dependency_packages", return_value=({"rclpy", "std_msgs"}, None)
+        ), mock.patch.object(cli, "run_command", return_value=result) as run, mock.patch.object(
+            cli, "_mark_completion_dirty"
+        ), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli._create_package(args), 0)
+
+        command = run.call_args.args[0]
+        self.assertIn("ament_python", command)
+        self.assertEqual(command[-1], "hello_world")
+        self.assertIn("rclpy", command)
+
+    def test_create_empty_essential_cancels_without_running_ros(self) -> None:
+        args = argparse.Namespace(
+            command="create", create_entity="pkg", language=None, package_name=None, dependencies=()
+        )
+        stdin = mock.Mock()
+        stdin.isatty.return_value = True
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli.sys, "stdin", stdin
+        ), mock.patch("builtins.input", return_value=""), mock.patch.object(
+            cli, "run_command"
+        ) as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli._create_package(args), 0)
+        run.assert_not_called()
+
+    def test_create_prompt_suggests_choices_and_reuses_invalid_input(self) -> None:
+        stdin = mock.Mock()
+        stdin.isatty.return_value = True
+        stdout = io.StringIO()
+        with mock.patch.object(cli.sys, "stdin", stdin), mock.patch.object(
+            cli, "_input", side_effect=["pythn", "python"]
+        ) as user_input, contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                cli._prompt_create_value("Language:", cli.CREATE_LANGUAGE_TYPES),
+                "python",
+            )
+        self.assertIn("Do you mean: python", stdout.getvalue())
+        self.assertEqual(user_input.call_args_list[1].kwargs["initial"], "pythn")
+
+    def test_input_prefills_existing_text_with_readline(self) -> None:
+        stdin = mock.Mock()
+        stdin.isatty.return_value = True
+        readline = mock.Mock()
+
+        def answer(_: str) -> str:
+            readline.set_startup_hook.call_args.args[0]()
+            return "python"
+
+        with mock.patch.object(cli.sys, "stdin", stdin), mock.patch.dict(
+            sys.modules, {"readline": readline}
+        ), mock.patch("builtins.input", side_effect=answer):
+            self.assertEqual(cli._input("Language:", initial="pythn"), "python")
+        readline.insert_text.assert_called_once_with("pythn")
+        self.assertEqual(readline.set_startup_hook.call_args_list[-1].args, ())
+
+    def test_create_missing_essential_requires_tty(self) -> None:
+        args = argparse.Namespace(
+            command="create", create_entity="pkg", language=None, package_name=None, dependencies=()
+        )
+        stdin = mock.Mock()
+        stdin.isatty.return_value = False
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+            cli.sys, "stdin", stdin
+        ), self.assertRaisesRegex(cli.UsageError, "missing essential values"):
+            cli._create_package(args)
+
+    def test_create_warns_for_no_and_unknown_dependencies_but_proceeds(self) -> None:
+        result = mock.Mock(returncode=0, exit_code=0, stderr="")
+        cases = (((), "No dependencies specified"), (("not_installed",), "not currently discoverable"))
+        for dependencies, warning in cases:
+            with self.subTest(dependencies=dependencies):
+                args = argparse.Namespace(
+                    command="create", create_entity="package", language="c", package_name="demo_pkg", dependencies=dependencies
+                )
+                stdout = io.StringIO()
+                with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
+                    cli, "_runtime_environment", return_value={}
+                ), mock.patch.object(
+                    cli, "_known_dependency_packages", return_value=(set(), None)
+                ), mock.patch.object(cli, "run_command", return_value=result) as run, mock.patch.object(
+                    cli, "_mark_completion_dirty"
+                ), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(cli._create_package(args), 0)
+                run.assert_called_once()
+                self.assertIn(warning, stdout.getvalue())
+
+    def test_pkg_create_compatibility_order_is_normalized(self) -> None:
+        parser, _ = cli._build_parser()
+        args = parser.parse_args(["pkg", "create", "hello_world", "cpp", "rclcpp"])
+        self.assertEqual(
+            cli._creation_values(args),
+            ("pkg", "cpp", "hello_world", ("rclcpp",)),
+        )
+
+    def test_dependency_discovery_combines_workspace_and_runtime_packages(self) -> None:
+        result = mock.Mock(returncode=0, exit_code=0, stdout="rclpy\nstd_msgs\n", stderr="")
+        with mock.patch.object(cli, "_workspace_probe", return_value=("local_interfaces",)), mock.patch.object(
+            cli, "run_command", return_value=result
+        ):
+            known, failure = cli._known_dependency_packages(self.workspace, {})
+        self.assertEqual(known, {"rclpy", "std_msgs", "local_interfaces"})
+        self.assertIsNone(failure)
+
+    def test_create_refuses_existing_destination(self) -> None:
+        (self.workspace.src / "already_here").mkdir()
+        args = argparse.Namespace(
+            command="create", create_entity="pkg", language="python", package_name="already_here", dependencies=()
+        )
+        with mock.patch.object(cli, "_workspace", return_value=self.workspace), self.assertRaisesRegex(
+            cli.UsageError, "already exists"
+        ):
+            cli._create_package(args)
 
     def test_selected_build_offers_up_to_only_after_evidenced_failure(self) -> None:
         args = argparse.Namespace(packages=("lazy_app",), up_to=False)
@@ -356,6 +601,27 @@ class CliCompletionTests(unittest.TestCase):
         self.assertEqual(
             self.candidates(["lazy", "run", "demo", "t"]),
             ("talker",),
+        )
+
+    def test_create_completion_follows_entity_language_name_and_dependencies(self) -> None:
+        self.assertEqual(self.candidates(["lazy", "create", ""]), ("package", "pkg"))
+        self.assertIn("python", self.candidates(["lazy", "create", "pkg", "p"]))
+        self.assertEqual(self.candidates(["lazy", "create", "pkg", "python", "hello", "d"]), ("demo",))
+        self.assertEqual(
+            self.candidates(["lazy", "create", "pkg", "python", "hello", "demo", "d"]),
+            (),
+        )
+
+    def test_pkg_create_compatibility_completion(self) -> None:
+        self.assertEqual(self.candidates(["lazy", "pkg", ""]), ("create",))
+        self.assertIn("cpp", self.candidates(["lazy", "pkg", "create", "hello", "c"]))
+
+    def test_zsh_create_completion_matches_bash(self) -> None:
+        words = ["lazy", "create", "pkg", "p"]
+        args = argparse.Namespace(words=["--", *words], cursor=len(words), shell="zsh")
+        self.assertEqual(
+            cli._completion_candidates(args, self.data, self.workspace),
+            self.candidates(words),
         )
         self.assertEqual(
             self.candidates(["lazy", "run", "--window", "d"]),

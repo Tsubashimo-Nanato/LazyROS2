@@ -29,6 +29,7 @@ _lazyros_compadd()
     _lazyros_completion_observe "$completion_context"
 
     if (( completion_repeat )); then
+        _lazyros_completion_help "${_LAZYROS_COMPLETION_HELP_WORDS[@]}"
         compstate[insert]=''
         compstate[list]=list
     else
@@ -36,6 +37,18 @@ _lazyros_compadd()
         compstate[list]=''
     fi
     compadd -Q -- "$@"
+}
+
+_lazyros_completion_help()
+{
+    local -a help_path
+    [[ ${1-} == lazy ]] && shift
+    case ${1-}:${2-} in
+        create:package|create:pkg|pkg:create) help_path=(${1-} ${2-}) ;;
+        :*) help_path=() ;;
+        *) help_path=(${1-}) ;;
+    esac
+    command lazy help "${help_path[@]}" </dev/null >/dev/tty 2>&1
 }
 
 _lazyros_completion_observe()
@@ -48,6 +61,8 @@ _lazyros_completion_observe()
 _lazyros_complete_lazy()
 {
     local -a candidates
+    typeset -ga _LAZYROS_COMPLETION_HELP_WORDS
+    _LAZYROS_COMPLETION_HELP_WORDS=("${words[@]}")
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \

@@ -62,6 +62,19 @@ def test_zsh_double_tab_is_scoped_to_lazy_completion_state() -> None:
         assert "zstyle" not in script
 
 
+def test_double_tab_routes_to_contextual_help() -> None:
+    for name in ("lazy-init.zsh", "lazy-control.zsh"):
+        script = read_shell(name)
+        assert "_lazyros_completion_help" in script
+        assert 'command lazy help "${help_path[@]}"' in script
+        assert "pkg:create" in script
+
+    bash_script = read_shell("lazy-control.bash")
+    assert "_lazyros_completion_help" in bash_script
+    assert "EPOCHREALTIME" in bash_script
+    assert "pkg:create" in bash_script
+
+
 def test_controller_and_task_have_opposite_window_defaults() -> None:
     for name in ("lazy-control.bash", "lazy-control.zsh"):
         script = read_shell(name)
@@ -111,7 +124,13 @@ def test_prompt_names_workspace_or_job_and_ros_distro() -> None:
         script = read_shell(name)
         assert "LAZYROS_WORKSPACE" in script
         assert "ROS_DISTRO" in script
-        assert "[lazy:" in script
+        assert "[${_lazyros_workspace_label}" in script
+        assert "[lazy:" not in script
+        assert "_lazyros_path_label" in script
+        assert "LAZYROS_WORKSPACE" in script
+        assert "…/" in script
+        assert "\\u@\\h" not in script
+        assert "%n@%m" not in script
 
     for name in ("lazy-task.bash", "lazy-task.zsh"):
         script = read_shell(name)

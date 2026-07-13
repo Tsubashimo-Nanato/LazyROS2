@@ -56,6 +56,9 @@ build()
     _lazyros_reload_overlay
 }
 
+create() { command lazy create "$@"; }
+pkg() { command lazy pkg "$@"; }
+
 test() { command lazy test "$@"; }
 test-result() { command lazy test-result "$@"; }
 run() { _lazyros_command_at run --window "$@"; }
@@ -80,6 +83,8 @@ lazy()
     shift
     case $command_name in
         build) build "$@" ;;
+        create) create "$@" ;;
+        pkg) pkg "$@" ;;
         test) test "$@" ;;
         test-result) test-result "$@" ;;
         run) run "$@" ;;
@@ -113,6 +118,7 @@ _lazyros_compadd()
     _lazyros_completion_observe "$completion_context"
 
     if (( completion_repeat )); then
+        _lazyros_completion_help "${_LAZYROS_COMPLETION_HELP_WORDS[@]}"
         compstate[insert]=''
         compstate[list]=list
     else
@@ -120,6 +126,18 @@ _lazyros_compadd()
         compstate[list]=''
     fi
     compadd -Q -- "$@"
+}
+
+_lazyros_completion_help()
+{
+    local -a help_path
+    [[ ${1-} == lazy ]] && shift
+    case ${1-}:${2-} in
+        create:package|create:pkg|pkg:create) help_path=(${1-} ${2-}) ;;
+        :*) help_path=() ;;
+        *) help_path=(${1-}) ;;
+    esac
+    command lazy help "${help_path[@]}" </dev/null >/dev/tty 2>&1
 }
 
 _lazyros_completion_observe()
@@ -132,6 +150,8 @@ _lazyros_completion_observe()
 _lazyros_complete_lazy()
 {
     local -a candidates
+    typeset -ga _LAZYROS_COMPLETION_HELP_WORDS
+    _LAZYROS_COMPLETION_HELP_WORDS=("${words[@]}")
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \
@@ -152,6 +172,8 @@ _lazyros_complete_direct()
     local direct_cursor=$((CURRENT + 1))
     local -a direct_words candidates
     direct_words=(lazy "${words[@]}")
+    typeset -ga _LAZYROS_COMPLETION_HELP_WORDS
+    _LAZYROS_COMPLETION_HELP_WORDS=("${direct_words[@]}")
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \
@@ -173,7 +195,7 @@ if (( ! $+functions[compdef] )); then
 fi
 
 compdef _lazyros_complete_lazy lazy
-compdef _lazyros_complete_direct build test run launch rviz jobs config help
+compdef _lazyros_complete_direct build create pkg test run launch rviz jobs config help
 
 HISTFILE=$LAZYROS_HISTORY_FILE
 HISTSIZE=2000
@@ -183,16 +205,40 @@ fc -p "$HISTFILE"
 
 _lazyros_workspace_label=${LAZYROS_WORKSPACE:t}
 _lazyros_workspace_label=${_lazyros_workspace_label//[^[:alnum:]_.-]/?}
-_lazyros_ros_label=${ROS_DISTRO:-none}
+_lazyros_ros_label=${ROS_DISTRO:-}
 _lazyros_ros_label=${_lazyros_ros_label//[^[:alnum:]_.-]/?}
+_lazyros_ros_segment=${_lazyros_ros_label:+ | ros:${_lazyros_ros_label}}
+
+_lazyros_prompt_spacing()
+{
+    local relative parent leaf
+
+    if [[ $PWD == "$LAZYROS_WORKSPACE" ]]; then
+        _lazyros_path_label=.
+    elif [[ $PWD == "$LAZYROS_WORKSPACE"/* ]]; then
+        _lazyros_path_label=${PWD#"$LAZYROS_WORKSPACE"/}
+    else
+        _lazyros_path_label=${PWD/#$HOME/~}
+    fi
+    relative=$_lazyros_path_label
+    if [[ $relative == */*/* ]]; then
+        leaf=${relative:t}
+        parent=${relative:h:t}
+        _lazyros_path_label="…/$parent/$leaf"
+    fi
+    _lazyros_path_label=${_lazyros_path_label//\%/%%}
+    print
+}
+precmd_functions+=(_lazyros_prompt_spacing)
+setopt prompt_subst
 
 if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR+x} ]]; then
-    PROMPT="%F{110}[lazy:${_lazyros_workspace_label} | ros:${_lazyros_ros_label}]%f %n@%m:%~%# "
+    PROMPT="%F{110}[${_lazyros_workspace_label}${_lazyros_ros_segment}]%f \${_lazyros_path_label}%# "
 else
-    PROMPT="[lazy:${_lazyros_workspace_label} | ros:${_lazyros_ros_label}] %n@%m:%~%# "
+    PROMPT="[${_lazyros_workspace_label}${_lazyros_ros_segment}] \${_lazyros_path_label}%# "
 fi
 
-unset _lazyros_workspace_label _lazyros_ros_label
+unset _lazyros_workspace_label _lazyros_ros_label _lazyros_ros_segment
 
 if ! builtin cd -- "$LAZYROS_WORKSPACE"; then
     print -u2 -r -- "lazy: cannot enter workspace: $LAZYROS_WORKSPACE"

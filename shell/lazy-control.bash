@@ -59,6 +59,16 @@ build()
     _lazyros_reload_overlay
 }
 
+create()
+{
+    command lazy create "$@"
+}
+
+pkg()
+{
+    command lazy pkg "$@"
+}
+
 test()
 {
     command lazy test "$@"
@@ -126,6 +136,8 @@ lazy()
     shift
     case $command_name in
         build) build "$@" ;;
+        create) create "$@" ;;
+        pkg) pkg "$@" ;;
         test) test "$@" ;;
         test-result) test-result "$@" ;;
         run) run "$@" ;;
@@ -147,8 +159,25 @@ _lazyros_completion_candidates()
     local cursor=$1
     local current_word=$2
     local candidate
+    local completion_context now elapsed completion_repeat=0
+    local -a completion_words help_words
     shift 2
+    completion_words=("$@")
     COMPREPLY=()
+
+    completion_context=$cursor:
+    if ((cursor > 0)); then
+        printf -v completion_context '%s%s\034' "$completion_context" "${completion_words[*]:0:cursor}"
+    fi
+    now=${EPOCHREALTIME/./}
+    [[ $now =~ ^[0-9]+$ ]] || now=$((SECONDS * 1000000))
+    if [[ ${_LAZYROS_COMPLETION_CONTEXT:-} == "$completion_context" &&
+        ${_LAZYROS_COMPLETION_TIME:-0} =~ ^[0-9]+$ ]]; then
+        elapsed=$((10#$now - 10#$_LAZYROS_COMPLETION_TIME))
+        ((elapsed >= 0 && elapsed <= 1000000)) && completion_repeat=1
+    fi
+    _LAZYROS_COMPLETION_CONTEXT=$completion_context
+    _LAZYROS_COMPLETION_TIME=$now
 
     while IFS= read -r candidate; do
         if [[ $candidate == "$current_word"* ]]; then
@@ -158,8 +187,25 @@ _lazyros_completion_candidates()
         command lazy __complete \
             --shell bash \
             --cursor "$cursor" \
-            -- "$@" 2>/dev/null
+            -- "${completion_words[@]}" 2>/dev/null
     )
+
+    if ((completion_repeat)); then
+        help_words=("${completion_words[@]}")
+        _lazyros_completion_help "${help_words[@]}"
+    fi
+}
+
+_lazyros_completion_help()
+{
+    local -a help_path
+    [[ ${1-} == lazy ]] && shift
+    case ${1-}:${2-} in
+        create:package | create:pkg | pkg:create) help_path=("${1-}" "${2-}") ;;
+        :*) help_path=() ;;
+        *) help_path=("${1-}") ;;
+    esac
+    command lazy help "${help_path[@]}" </dev/null >/dev/tty 2>&1
 }
 
 _lazyros_complete_lazy()
@@ -182,7 +228,7 @@ _lazyros_complete_direct()
 if type complete >/dev/null 2>&1; then
     complete -o bashdefault -o default -F _lazyros_complete_lazy lazy
     complete -o bashdefault -o default -F _lazyros_complete_direct \
-        build test run launch rviz jobs config help
+        build create pkg test run launch rviz jobs config help
 fi
 
 HISTFILE=$LAZYROS_HISTORY_FILE
@@ -197,16 +243,42 @@ fi
 
 _lazyros_workspace_label=${LAZYROS_WORKSPACE##*/}
 _lazyros_workspace_label=${_lazyros_workspace_label//[^[:alnum:]_.-]/?}
-_lazyros_ros_label=${ROS_DISTRO:-none}
+_lazyros_ros_label=${ROS_DISTRO:-}
 _lazyros_ros_label=${_lazyros_ros_label//[^[:alnum:]_.-]/?}
+_lazyros_ros_segment=${_lazyros_ros_label:+ | ros:${_lazyros_ros_label}}
+
+_lazyros_prompt_spacing()
+{
+    local relative parent leaf
+
+    if [[ $PWD == "$LAZYROS_WORKSPACE" ]]; then
+        _lazyros_path_label=.
+    elif [[ $PWD == "$LAZYROS_WORKSPACE"/* ]]; then
+        _lazyros_path_label=${PWD#"$LAZYROS_WORKSPACE"/}
+    else
+        _lazyros_path_label=${PWD/#"$HOME"/~}
+    fi
+    relative=$_lazyros_path_label
+    if [[ $relative == */*/* ]]; then
+        leaf=${relative##*/}
+        parent=${relative%/*}
+        parent=${parent##*/}
+        _lazyros_path_label="…/$parent/$leaf"
+    fi
+    _lazyros_path_label=${_lazyros_path_label//\\/\\\\}
+    _lazyros_path_label=${_lazyros_path_label//\$/\\$}
+    _lazyros_path_label=${_lazyros_path_label//\`/\\\`}
+    printf '\n'
+}
+PROMPT_COMMAND=_lazyros_prompt_spacing
 
 if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR+x} ]]; then
-    PS1="\[\033[38;5;110m\][lazy:${_lazyros_workspace_label} | ros:${_lazyros_ros_label}]\[\033[0m\] \u@\h:\w\\$ "
+    PS1="\[\033[38;5;110m\][${_lazyros_workspace_label}${_lazyros_ros_segment}]\[\033[0m\] \${_lazyros_path_label}\\$ "
 else
-    PS1="[lazy:${_lazyros_workspace_label} | ros:${_lazyros_ros_label}] \u@\h:\w\\$ "
+    PS1="[${_lazyros_workspace_label}${_lazyros_ros_segment}] \${_lazyros_path_label}\\$ "
 fi
 
-unset _lazyros_workspace_label _lazyros_ros_label
+unset _lazyros_workspace_label _lazyros_ros_label _lazyros_ros_segment
 
 if ! builtin cd -- "$LAZYROS_WORKSPACE"; then
     printf 'lazy: cannot enter workspace: %s\n' "$LAZYROS_WORKSPACE" >&2

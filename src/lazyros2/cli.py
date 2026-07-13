@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -45,6 +46,8 @@ from lazyros2.terminal import TerminalKind, detect_terminal
 
 PUBLIC_COMMANDS = (
     "build",
+    "create",
+    "pkg",
     "test",
     "test-result",
     "run",
@@ -59,6 +62,15 @@ PUBLIC_COMMANDS = (
     "uninstall",
     "exit",
 )
+HELP_GROUPS = {"test": ("test", "test-result")}
+CREATE_ENTITIES = ("package", "pkg")
+CREATE_LANGUAGE_TYPES = {
+    "python": "ament_python",
+    "py": "ament_python",
+    "cpp": "ament_cmake",
+    "c++": "ament_cmake",
+    "c": "ament_cmake",
+}
 COMPLETION_BUDGET_SECONDS = 1.5
 WELCOME_ART = r"""
  _                    ____   ___  ____  ____
@@ -68,6 +80,16 @@ WELCOME_ART = r"""
 |_____\__,_/___|\__, |_| \_\___/|____/|_____|
                  |___/
 """.strip("\n")
+ANSI = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "red": "\033[31m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "cyan": "\033[36m",
+    "input": "\033[48;5;236m",
+}
 
 
 class LazyError(RuntimeError):
@@ -76,6 +98,27 @@ class LazyError(RuntimeError):
 
 class UsageError(LazyError):
     """Raised when user-supplied wrapper arguments violate the CLI contract."""
+
+
+def _styled(text: object, *styles: str) -> str:
+    if os.environ.get("NO_COLOR") is not None or not sys.stdout.isatty():
+        return str(text)
+    prefix = "".join(ANSI[style] for style in styles)
+    return f"{prefix}{text}{ANSI['reset']}"
+
+
+def _input(prompt: str, *, initial: str = "") -> str:
+    if not initial or not sys.stdin.isatty():
+        return input(_styled(f" {prompt} ", "input"))
+    try:
+        import readline
+    except ImportError:
+        return input(_styled(f" {prompt} ", "input"))
+    readline.set_startup_hook(lambda: readline.insert_text(initial))
+    try:
+        return input(_styled(f" {prompt} ", "input"))
+    finally:
+        readline.set_startup_hook()
 
 
 def _app_root() -> Path:
@@ -114,59 +157,112 @@ def _ask_yes_no(prompt: str, *, default: bool = False) -> bool:
     if not sys.stdin.isatty():
         raise LazyError("interactive workspace setup requires a terminal")
     suffix = " [Y/n] " if default else " [y/N] "
-    reply = input(prompt + suffix).strip().lower()
+    reply = _input(prompt + suffix.strip()).strip().lower()
     if not reply:
         return default
     return reply in {"y", "yes"}
 
 
-def _workspace_creation_reason(root: Path) -> str | None:
-    try:
-        entries = tuple(root.iterdir())
-    except OSError as error:
-        raise WorkspaceError(f"cannot inspect workspace directory {root}: {error}") from error
-    if not entries:
-        return "the directory is empty"
+def _workspace_fix(root: Path) -> str:
+    if not root.exists():
+        return "Choose an existing directory, or create it before launching LazyROS2."
+    if not root.is_dir():
+        return "Choose a directory instead of a file."
+    src = root / "src"
+    if src.exists() and not src.is_dir():
+        return f"Move or rename {src}, then create a src directory."
+    return f"A ROS 2 workspace normally has a src directory at {src}."
 
-    incomplete_names = {"build", "install", "log"}
-    has_generated_directory = any(entry.name in incomplete_names for entry in entries)
-    if has_generated_directory and all(entry.name in incomplete_names for entry in entries):
-        return "it has generated workspace directories but no src directory"
-    return None
+
+def _choose_workspace_action() -> str:
+    if not sys.stdin.isatty():
+        raise LazyError("interactive workspace setup requires a terminal")
+    print()
+    print(_styled("What would you like to do?", "bold"))
+    print(f"  {_styled('[c]', 'cyan')} Create a new workspace in this directory")
+    print(f"  {_styled('[d]', 'cyan')} Enter a different workspace directory")
+    print(f"  {_styled('[q]', 'cyan')} Quit and launch lazy again from the correct directory")
+    print()
+    while True:
+        reply = _input("Choice [c/d/q]:").strip().lower()
+        aliases = {"c": "create", "create": "create", "d": "directory", "directory": "directory", "q": "quit", "quit": "quit"}
+        if reply in aliases:
+            return aliases[reply]
+        print(_styled("Please enter c, d, or q.", "yellow"))
+
+
+def _create_workspace(root: Path) -> Workspace | None:
+    if root.exists() and not root.is_dir():
+        print(_styled(f"Cannot create a workspace: {root} is not a directory.", "red"))
+        print(f"{_styled('Possible fix:', 'yellow', 'bold')} {_workspace_fix(root)}")
+        return None
+    src = root / "src"
+    if src.exists() and not src.is_dir():
+        print(_styled(f"Cannot create a workspace: {src} already exists and is not a directory.", "red"))
+        print(f"{_styled('Possible fix:', 'yellow', 'bold')} {_workspace_fix(root)}")
+        return None
+    print()
+    print(_styled("Planned changes", "bold", "cyan"))
+    if root.exists():
+        print(f"  Create directory: {src}")
+    else:
+        print(f"  Create directory: {root}")
+        print(f"  Create directory: {src}")
+    print()
+    print(f"{_styled('Data erased:', 'bold')} {_styled('none', 'green', 'bold')}")
+    print(_styled("Existing files and directories will be preserved.", "dim"))
+    print()
+    if not _ask_yes_no("Apply these changes?"):
+        print()
+        print(_styled("Workspace creation cancelled; no files were changed.", "yellow"))
+        return None
+    try:
+        src.mkdir(parents=True)
+    except OSError as error:
+        raise WorkspaceError(f"cannot create {src}: {error}") from error
+    print()
+    print(_styled(f"Created workspace: {root}", "green", "bold"))
+    return Workspace.open(root, package_probe=_workspace_probe)
 
 
 def _standalone_workspace() -> Workspace | None:
-    root = Path(os.environ.get("LAZYROS_WORKSPACE", os.getcwd())).expanduser().resolve(
-        strict=False
-    )
-    print(WELCOME_ART)
-    print("Hello from LazyROS2!")
-    try:
-        workspace = Workspace.open(root, package_probe=_workspace_probe)
-    except WorkspaceError as error:
-        if not root.is_dir():
-            print(f"Workspace is not recognized because {error}.")
-            return None
-        reason = _workspace_creation_reason(root)
-        if reason is None:
-            print(f"Workspace is not recognized because {error}.")
-            print("This directory has an unrecognized layout; no files were changed.")
-            return None
-        print(f"Workspace is not recognized because {reason}.")
-        if not _ask_yes_no(f"Create a new ROS 2 workspace in {root}?"):
-            print("Workspace creation cancelled.")
-            return None
+    root = Path(os.environ.get("LAZYROS_WORKSPACE", os.getcwd())).expanduser().resolve(strict=False)
+    print(_styled(WELCOME_ART, "cyan", "bold"))
+    print()
+    print(_styled("Hello from LazyROS2!", "bold"))
+    print()
+    while True:
         try:
-            (root / "src").mkdir()
-        except OSError as error:
-            raise WorkspaceError(f"cannot create {root / 'src'}: {error}") from error
-        print(f"Created workspace: {root}")
-        return Workspace.open(root, package_probe=_workspace_probe)
+            workspace = Workspace.open(root, package_probe=_workspace_probe)
+        except WorkspaceError as error:
+            print(_styled("Workspace not detected", "yellow", "bold"))
+            print(f"  {_styled('Directory:', 'bold')} {root}")
+            print(f"  {_styled('Reason:', 'red', 'bold')} {error}")
+            print()
+            print(f"{_styled('Possible fix:', 'yellow', 'bold')} {_workspace_fix(root)}")
+            action = _choose_workspace_action()
+            if action == "quit":
+                print()
+                print(_styled("No files were changed.", "green"))
+                print("Change to the correct directory and run lazy again.")
+                return None
+            if action == "create":
+                return _create_workspace(root)
+            entered = _input("Workspace directory:").strip()
+            if not entered:
+                print(_styled("No directory entered; no files were changed.", "yellow"))
+                continue
+            root = Path(entered).expanduser().resolve(strict=False)
+            continue
 
-    if not _ask_yes_no(f"Use recognized workspace {workspace.root}?", default=True):
-        print("Launch cancelled.")
-        return None
-    return workspace
+        print(_styled("Workspace detected", "green", "bold"))
+        print(f"  {_styled('Directory:', 'bold')} {workspace.root}")
+        print()
+        if not _ask_yes_no("Use this workspace?", default=True):
+            print()
+            print(_styled("Launch cancelled; no files were changed.", "yellow"))
+            return None
+        return workspace
 
 
 def _completion_workspace(deadline: float) -> Workspace:
@@ -383,6 +479,133 @@ def _test_result() -> int:
     workspace = _workspace()
     baseline = _load_baseline(os.environ)
     return _run(test_result_argv(workspace), workspace, baseline)
+
+
+def _prompt_create_value(prompt: str, choices: Mapping[str, str] | None = None) -> str | None:
+    if not sys.stdin.isatty():
+        raise UsageError(
+            "package creation is missing essential values; use "
+            "lazy create pkg LANGUAGE NAME [DEPENDENCY ...]"
+        )
+    previous = ""
+    if choices is not None:
+        print(_styled(f"Do you mean: {', '.join(choices)}", "cyan"))
+    while True:
+        value = _input(prompt, initial=previous).strip()
+        if not value:
+            print(_styled("Package creation cancelled; no files were changed.", "yellow"))
+            return None
+        normalized = value.lower()
+        if choices is None or normalized in choices:
+            return normalized if choices is not None else value
+        suggestions = difflib.get_close_matches(
+            normalized,
+            tuple(choices),
+            n=3,
+            cutoff=0.35,
+        )
+        offered = suggestions or list(choices)
+        print(
+            _styled(
+                f"Do you mean: {', '.join(offered)}? Enter cancels.",
+                "yellow",
+            )
+        )
+        previous = value
+
+
+def _creation_values(
+    args: argparse.Namespace,
+) -> tuple[str | None, str | None, str | None, tuple[str, ...]]:
+    if args.command == "pkg":
+        entity = "pkg" if args.pkg_action == "create" else None
+        return entity, args.language, args.package_name, tuple(args.dependencies)
+    return args.create_entity, args.language, args.package_name, tuple(args.dependencies)
+
+
+def _known_dependency_packages(
+    workspace: Workspace,
+    env: Mapping[str, str],
+) -> tuple[set[str], str | None]:
+    known: set[str] = set()
+    failures: list[str] = []
+    try:
+        known.update(_workspace_probe(workspace.root))
+    except OSError as error:
+        failures.append(f"workspace packages: {error}")
+    result = run_command(
+        ("ros2", "pkg", "list"),
+        cwd=workspace.root,
+        env=env,
+        timeout=2.0,
+        capture_output=True,
+    )
+    if result.exit_code == 0:
+        known.update(line.strip() for line in result.stdout.splitlines() if line.strip())
+    else:
+        failures.append(f"runtime packages: exit {result.exit_code}")
+    return known, "; ".join(failures) or None
+
+
+def _create_package(args: argparse.Namespace) -> int:
+    workspace = _workspace()
+    entity, language, package_name, dependencies = _creation_values(args)
+    prompted = False
+    if entity is None:
+        entity = _prompt_create_value(
+            "Create what? [package/pkg]:",
+            {name: name for name in CREATE_ENTITIES},
+        )
+        prompted = True
+    if entity is None:
+        return 0
+    if language is None:
+        language = _prompt_create_value("Language [python/py/cpp/c++/c]:", CREATE_LANGUAGE_TYPES)
+        prompted = True
+    if language is None:
+        return 0
+    if package_name is None:
+        package_name = _prompt_create_value("Package name:")
+        prompted = True
+    if package_name is None:
+        return 0
+    if prompted:
+        entered = _input("Dependencies (space-separated; Enter for none):").strip()
+        dependencies = tuple(entered.split()) if entered else ()
+
+    destination = workspace.src / package_name
+    if destination.exists():
+        raise UsageError(f"package destination already exists: {destination}")
+
+    runtime = _runtime_environment(workspace, os.environ)
+    known, validation_failure = _known_dependency_packages(workspace, runtime)
+    if not dependencies:
+        print(_styled("No dependencies specified; creating the package anyway.", "yellow"))
+    else:
+        unknown = tuple(dependency for dependency in dependencies if dependency not in known)
+        if unknown:
+            print(
+                _styled(
+                    "Dependencies not currently discoverable: " + ", ".join(unknown),
+                    "yellow",
+                )
+            )
+            print("They will still be recorded and can be corrected later.")
+    if validation_failure:
+        print(_styled(f"Dependency validation incomplete: {validation_failure}", "yellow"))
+
+    command = [
+        "ros2", "pkg", "create", "--build-type", CREATE_LANGUAGE_TYPES[language]
+    ]
+    if dependencies:
+        command.extend(("--dependencies", *dependencies))
+    command.append(package_name)
+    result = run_command(command, cwd=workspace.src, env=runtime)
+    if result.returncode in {124, 126, 127} and result.stderr:
+        print(f"lazy: {result.stderr.strip()}", file=sys.stderr)
+    if result.exit_code == 0:
+        _mark_completion_dirty(workspace, os.environ)
+    return result.exit_code
 
 
 def _command_location(args: argparse.Namespace) -> str:
@@ -1013,7 +1236,7 @@ def _complete(args: argparse.Namespace) -> int:
         command = _completion_command(args)
         workspace = (
             _completion_workspace(deadline)
-            if command in {"build", "test", "run", "launch", "rviz", "jobs"}
+            if command in {"build", "test", "run", "launch", "rviz", "jobs", "create", "pkg"}
             else None
         )
         data = _completion_data_for_command(
@@ -1132,6 +1355,24 @@ def _completion_data_for_command(
                 deadline=deadline,
             )
         )
+    if command in {"create", "pkg"}:
+        runtime = _runtime_environment(
+            workspace,
+            os.environ,
+            overlay_timeout=_completion_remaining(deadline),
+        )
+        result = run_command(
+            ("ros2", "pkg", "list"),
+            cwd=workspace.root,
+            env=runtime,
+            timeout=_completion_remaining(deadline),
+            capture_output=True,
+        )
+        packages = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        packages.update(
+            _workspace_probe(workspace.root, timeout=_completion_remaining(deadline))
+        )
+        return CompletionData(packages=tuple(sorted(packages)))
     return CompletionData()
 
 
@@ -1169,6 +1410,34 @@ def _completion_candidates(
     if command in {"build", "test"}:
         options = ("--up-to",) if command == "build" else ()
         return _prefix((*options, *data.packages), current)
+    if command == "create":
+        if not before:
+            return _prefix(CREATE_ENTITIES, current)
+        if before[0] not in CREATE_ENTITIES:
+            return ()
+        if len(before) == 1:
+            return _prefix(tuple(CREATE_LANGUAGE_TYPES), current)
+        if before[1] not in CREATE_LANGUAGE_TYPES or len(before) == 2:
+            return ()
+        selected = set(before[3:])
+        return _prefix(
+            tuple(package for package in data.packages if package not in selected),
+            current,
+        )
+    if command == "pkg":
+        if not before:
+            return _prefix(("create",), current)
+        if before[0] != "create":
+            return ()
+        if len(before) == 1:
+            return ()
+        if len(before) == 2:
+            return _prefix(tuple(CREATE_LANGUAGE_TYPES), current)
+        selected = set(before[3:])
+        return _prefix(
+            tuple(package for package in data.packages if package not in selected),
+            current,
+        )
     if command == "run":
         return _complete_target_command(
             before,
@@ -1193,7 +1462,13 @@ def _completion_candidates(
     if command == "config":
         return _complete_config(before, current)
     if command == "help":
-        return _prefix(PUBLIC_COMMANDS, current)
+        if not before:
+            return _prefix(PUBLIC_COMMANDS, current)
+        if before == ["create"]:
+            return _prefix(CREATE_ENTITIES, current)
+        if before == ["pkg"]:
+            return _prefix(("create",), current)
+        return ()
     return ()
 
 
@@ -1374,6 +1649,38 @@ def _split_passthrough(argv: Sequence[str]) -> tuple[list[str], tuple[str, ...]]
     return values[:index], tuple(values[index + 1 :])
 
 
+def _normalize_help_argv(argv: Sequence[str]) -> list[str]:
+    values = list(argv)
+    if values == ["?"]:
+        return ["help"]
+    if len(values) >= 2 and values[-1] == "?" and not values[0].startswith("-"):
+        return ["help", *values[:-1]]
+    return values
+
+
+def _print_help_topic(
+    topics: Sequence[str],
+    parser: argparse.ArgumentParser,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if not topics:
+        parser.print_help()
+        return 0
+    topic = " ".join(topics)
+    names = HELP_GROUPS.get(topic, (topic,))
+    selected = [command_parsers[name] for name in names if name in command_parsers]
+    if len(selected) != len(names):
+        print(f"lazy: unknown help topic: {topic}", file=sys.stderr)
+        return 2
+    for index, (name, topic_parser) in enumerate(zip(names, selected)):
+        if len(names) > 1:
+            if index:
+                print()
+            print(_styled(f"{name} command", "cyan", "bold"))
+        topic_parser.print_help()
+    return 0
+
+
 def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
     parser = argparse.ArgumentParser(
         prog="lazy",
@@ -1396,6 +1703,31 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     build.add_argument("--up-to", action="store_true")
     build.add_argument("packages", nargs="*")
     command_parsers["build"] = build
+
+    create = commands.add_parser("create", help="Create a ROS 2 resource interactively.")
+    create_entities = create.add_subparsers(dest="create_entity", metavar="ENTITY")
+    create_package = create_entities.add_parser(
+        "package", aliases=["pkg"], help="Create a package in the workspace src directory."
+    )
+    create_package.add_argument(
+        "language", nargs="?", choices=tuple(CREATE_LANGUAGE_TYPES), metavar="LANGUAGE"
+    )
+    create_package.add_argument("package_name", nargs="?", metavar="NAME")
+    create_package.add_argument("dependencies", nargs="*", metavar="DEPENDENCY")
+    command_parsers["create"] = create
+    command_parsers["create package"] = create_package
+    command_parsers["create pkg"] = create_package
+
+    pkg = commands.add_parser("pkg", help="Package commands (compatibility form).")
+    pkg_actions = pkg.add_subparsers(dest="pkg_action", metavar="ACTION")
+    pkg_create = pkg_actions.add_parser("create", help="Create a package.")
+    pkg_create.add_argument("package_name", nargs="?", metavar="NAME")
+    pkg_create.add_argument(
+        "language", nargs="?", choices=tuple(CREATE_LANGUAGE_TYPES), metavar="LANGUAGE"
+    )
+    pkg_create.add_argument("dependencies", nargs="*", metavar="DEPENDENCY")
+    command_parsers["pkg"] = pkg
+    command_parsers["pkg create"] = pkg_create
 
     test = commands.add_parser("test", help="Test all or selected workspace packages.")
     test.add_argument("packages", nargs="*")
@@ -1463,7 +1795,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     command_parsers["config"] = config
 
     help_parser = commands.add_parser("help", help="Show general or command-specific help.")
-    help_parser.add_argument("topic", nargs="?")
+    help_parser.add_argument("topics", nargs="*")
     command_parsers["help"] = help_parser
     uninstall = commands.add_parser("uninstall", help="Remove the managed user installation.")
     uninstall.add_argument("--purge", action="store_true")
@@ -1506,6 +1838,12 @@ def _dispatch(
         raise UsageError(f"{args.command} does not accept arguments after --")
     if args.command == "build":
         return _build(args, passthrough)
+    if args.command == "create":
+        return _create_package(args)
+    if args.command == "pkg":
+        if args.pkg_action != "create":
+            raise UsageError("pkg requires create")
+        return _create_package(args)
     if args.command == "test":
         return _test(args, passthrough)
     if args.command == "test-result":
@@ -1523,9 +1861,7 @@ def _dispatch(
     if args.command == "about":
         return _about()
     if args.command == "help":
-        selected = command_parsers.get(args.topic)
-        (selected or parser).print_help()
-        return 0 if selected or args.topic is None else 2
+        return _print_help_topic(args.topics, parser, command_parsers)
     if args.command == "uninstall":
         return _uninstall(args)
     if args.command == "exit":
@@ -1546,7 +1882,7 @@ def _dispatch(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    values = list(sys.argv[1:] if argv is None else argv)
+    values = _normalize_help_argv(sys.argv[1:] if argv is None else argv)
     parser, command_parsers = _build_parser()
     parse_values, passthrough = _split_passthrough(values)
     try:
@@ -1575,3 +1911,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ) as exc:
         print(f"lazy: {exc}", file=sys.stderr)
         return 3
+    finally:
+        command = values[0] if values else ""
+        if not command.startswith("__") and not os.environ.get("LAZYROS_ACTIVE"):
+            print()

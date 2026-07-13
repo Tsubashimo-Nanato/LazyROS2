@@ -9,9 +9,9 @@ cd ~/robot_ws
 lazy
 ```
 
-不带参数启动时，LazyROS2 会显示欢迎图案并确认探测到的 workspace。空目录或只含
-`build`、`install`、`log` 的不完整 workspace 可在确认后通过创建 `src` 初始化；其他
-无法识别的目录会显示具体原因且不会修改文件。需要交互确认，因此此启动形式要求终端。
+不带参数启动时，LazyROS2 会显示欢迎图案并确认探测到的 workspace。无法识别时会说明
+原因和可能修复，并允许在当前目录创建 workspace、输入另一个目录，或退出后从正确目录
+重新运行。创建前会列出新增目录和数据删除情况，并再次确认。此启动形式要求终端。
 
 带参数时是非交互 CLI，可用于脚本和 CI：
 
@@ -22,6 +22,21 @@ lazy build lidar_driver
 启动时的 workspace 会经过 `realpath` 固定。控制 shell 内之后执行 `cd` 不会改变 LazyROS2 命令的 workspace。构建、安装和日志目录固定为 `<workspace>/build`、`<workspace>/install`、`<workspace>/log`。
 
 ## 构建与测试
+
+### `create pkg [LANGUAGE] [NAME] [DEPENDENCY...]`
+
+在 workspace 的 `src` 目录中调用 `ros2 pkg create`。`pkg` 和 `package` 等价；Python
+可写作 `python` 或 `py`，C++ 可写作 `cpp`、`c++` 或 `c`。缺少语言或名称时会交互询问；
+直接回车会取消且不创建文件。依赖项可省略，LazyROS2 会提醒但仍继续创建。例如：
+
+```sh
+lazy create pkg python lidar_driver rclpy sensor_msgs
+lazy create package py camera_driver
+```
+
+兼容写法 `lazy pkg create NAME LANGUAGE [DEPENDENCY...]` 也可用。Tab 会依次补全资源类型、
+语言别名和依赖 package。无法发现的依赖会被警告，但仍会写入生成的 package；之后可编辑
+`package.xml` 和构建文件修正。
 
 ### `build [PKG...] [-- ARGS...]`
 
