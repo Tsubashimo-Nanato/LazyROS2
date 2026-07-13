@@ -9,6 +9,10 @@ cd ~/robot_ws
 lazy
 ```
 
+不带参数启动时，LazyROS2 会显示欢迎图案并确认探测到的 workspace。空目录或只含
+`build`、`install`、`log` 的不完整 workspace 可在确认后通过创建 `src` 初始化；其他
+无法识别的目录会显示具体原因且不会修改文件。需要交互确认，因此此启动形式要求终端。
+
 带参数时是非交互 CLI，可用于脚本和 CI：
 
 ```sh

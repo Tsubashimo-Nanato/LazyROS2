@@ -76,11 +76,85 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(target, "demo pkg/$(touch nope)")
 
     def test_no_argument_cli_starts_detected_control_shell(self) -> None:
-        with mock.patch.object(cli, "_current_shell", return_value="zsh"), mock.patch.object(
+        workspace = mock.sentinel.workspace
+        with mock.patch.object(cli, "_standalone_workspace", return_value=workspace), mock.patch.object(
+            cli, "_current_shell", return_value="zsh"
+        ), mock.patch.object(
             cli, "_start_controller", return_value=17
         ) as start:
             self.assertEqual(cli.main([]), 17)
-        start.assert_called_once_with("zsh")
+        start.assert_called_once_with("zsh", workspace)
+
+    def test_no_argument_cli_stops_when_workspace_is_declined(self) -> None:
+        with mock.patch.object(cli, "_standalone_workspace", return_value=None), mock.patch.object(
+            cli, "_start_controller"
+        ) as start:
+            self.assertEqual(cli.main([]), 0)
+        start.assert_not_called()
+
+    def test_standalone_confirms_recognized_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "src").mkdir()
+            stdin = mock.Mock()
+            stdin.isatty.return_value = True
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
+                cli.sys, "stdin", stdin
+            ), mock.patch("builtins.input", return_value="y") as prompt, contextlib.redirect_stdout(stdout):
+                workspace = cli._standalone_workspace()
+
+        self.assertEqual(workspace.root, root.resolve())
+        self.assertIn("Hello from LazyROS2", stdout.getvalue())
+        self.assertIn("Use recognized workspace", prompt.call_args.args[0])
+
+    def test_standalone_creates_empty_workspace_after_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            stdin = mock.Mock()
+            stdin.isatty.return_value = True
+            with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
+                cli.sys, "stdin", stdin
+            ), mock.patch.object(cli, "_workspace_probe", return_value=()), mock.patch(
+                "builtins.input", return_value="yes"
+            ), contextlib.redirect_stdout(io.StringIO()):
+                workspace = cli._standalone_workspace()
+
+            self.assertEqual(workspace.root, root.resolve())
+            self.assertTrue((root / "src").is_dir())
+
+    def test_standalone_explains_odd_layout_without_modifying_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "notes.txt").write_text("not a workspace", encoding="utf-8")
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
+                cli, "_workspace_probe", return_value=()
+            ), mock.patch("builtins.input", side_effect=AssertionError("must not prompt")), contextlib.redirect_stdout(stdout):
+                workspace = cli._standalone_workspace()
+
+            self.assertIsNone(workspace)
+            self.assertIn("unrecognized layout", stdout.getvalue())
+            self.assertFalse((root / "src").exists())
+
+    def test_standalone_can_complete_generated_only_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "build").mkdir()
+            (root / "log").mkdir()
+            stdin = mock.Mock()
+            stdin.isatty.return_value = True
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {"LAZYROS_WORKSPACE": str(root)}), mock.patch.object(
+                cli.sys, "stdin", stdin
+            ), mock.patch.object(cli, "_workspace_probe", return_value=()), mock.patch(
+                "builtins.input", return_value="y"
+            ), contextlib.redirect_stdout(stdout):
+                workspace = cli._standalone_workspace()
+
+            self.assertEqual(workspace.root, root.resolve())
+            self.assertTrue((root / "src").is_dir())
+            self.assertIn("generated workspace directories", stdout.getvalue())
 
     def test_usage_failures_return_two(self) -> None:
         stderr = io.StringIO()

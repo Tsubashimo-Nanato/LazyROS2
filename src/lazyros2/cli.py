@@ -60,6 +60,14 @@ PUBLIC_COMMANDS = (
     "exit",
 )
 COMPLETION_BUDGET_SECONDS = 1.5
+WELCOME_ART = r"""
+ _                    ____   ___  ____  ____
+| |    __ _ _____   _|  _ \ / _ \/ ___||___ \
+| |   / _` |_  / | | | |_) | | | \___ \  __) |
+| |__| (_| |/ /| |_| |  _ <| |_| |___) |/ __/
+|_____\__,_/___|\__, |_| \_\___/|____/|_____|
+                 |___/
+""".strip("\n")
 
 
 class LazyError(RuntimeError):
@@ -100,6 +108,65 @@ def _workspace(env: Mapping[str, str] | None = None) -> Workspace:
     source = os.environ if env is None else env
     root = source.get("LAZYROS_WORKSPACE", os.getcwd())
     return Workspace.open(root, package_probe=_workspace_probe)
+
+
+def _ask_yes_no(prompt: str, *, default: bool = False) -> bool:
+    if not sys.stdin.isatty():
+        raise LazyError("interactive workspace setup requires a terminal")
+    suffix = " [Y/n] " if default else " [y/N] "
+    reply = input(prompt + suffix).strip().lower()
+    if not reply:
+        return default
+    return reply in {"y", "yes"}
+
+
+def _workspace_creation_reason(root: Path) -> str | None:
+    try:
+        entries = tuple(root.iterdir())
+    except OSError as error:
+        raise WorkspaceError(f"cannot inspect workspace directory {root}: {error}") from error
+    if not entries:
+        return "the directory is empty"
+
+    incomplete_names = {"build", "install", "log"}
+    has_generated_directory = any(entry.name in incomplete_names for entry in entries)
+    if has_generated_directory and all(entry.name in incomplete_names for entry in entries):
+        return "it has generated workspace directories but no src directory"
+    return None
+
+
+def _standalone_workspace() -> Workspace | None:
+    root = Path(os.environ.get("LAZYROS_WORKSPACE", os.getcwd())).expanduser().resolve(
+        strict=False
+    )
+    print(WELCOME_ART)
+    print("Hello from LazyROS2!")
+    try:
+        workspace = Workspace.open(root, package_probe=_workspace_probe)
+    except WorkspaceError as error:
+        if not root.is_dir():
+            print(f"Workspace is not recognized because {error}.")
+            return None
+        reason = _workspace_creation_reason(root)
+        if reason is None:
+            print(f"Workspace is not recognized because {error}.")
+            print("This directory has an unrecognized layout; no files were changed.")
+            return None
+        print(f"Workspace is not recognized because {reason}.")
+        if not _ask_yes_no(f"Create a new ROS 2 workspace in {root}?"):
+            print("Workspace creation cancelled.")
+            return None
+        try:
+            (root / "src").mkdir()
+        except OSError as error:
+            raise WorkspaceError(f"cannot create {root / 'src'}: {error}") from error
+        print(f"Created workspace: {root}")
+        return Workspace.open(root, package_probe=_workspace_probe)
+
+    if not _ask_yes_no(f"Use recognized workspace {workspace.root}?", default=True):
+        print("Launch cancelled.")
+        return None
+    return workspace
 
 
 def _completion_workspace(deadline: float) -> Workspace:
@@ -478,8 +545,8 @@ def _launcher_argv() -> tuple[str, ...]:
     return (sys.executable, "-m", "lazyros2")
 
 
-def _start_controller(shell_name: str) -> int:
-    workspace = _workspace()
+def _start_controller(shell_name: str, workspace: Workspace | None = None) -> int:
+    workspace = _workspace() if workspace is None else workspace
     hits = find_self_overlay(workspace, os.environ)
     if hits:
         details = ", ".join(f"{hit.variable}={hit.path}" for hit in hits)
@@ -1431,7 +1498,10 @@ def _dispatch(
     command_parsers: Mapping[str, argparse.ArgumentParser],
 ) -> int:
     if args.command is None:
-        return _start_controller(args.shell or _current_shell())
+        workspace = _standalone_workspace()
+        if workspace is None:
+            return 0
+        return _start_controller(args.shell or _current_shell(), workspace)
     if passthrough and args.command not in {"build", "test", "run", "launch", "rviz"}:
         raise UsageError(f"{args.command} does not accept arguments after --")
     if args.command == "build":
