@@ -39,7 +39,7 @@ Keep each pull request tied to one issue and use `Closes #<issue>` when appropri
 
 The required check is `CI / required`. Conversations must be resolved before merge. The repository uses squash merge and linear history; branches are deleted after merge.
 
-Do not add generated-by or AI co-author trailers. Commits, pull requests, tags, and releases must use the contributor's authenticated identity.
+Commits, pull requests, tags, and releases must use the authenticated contributor's identity. Do not add unverified co-author trailers.
 
 ## License
 

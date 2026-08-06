@@ -30,7 +30,7 @@ class XdgPathsTests(unittest.TestCase):
             "XDG_RUNTIME_DIR": "/run/user/1000",
         }
 
-        paths = XdgPaths.from_environment(env, home=Path("/home/nanato"))
+        paths = XdgPaths.from_environment(env, home=Path("/home/tester"))
 
         self.assertEqual(paths.config, Path("/cfg/lazyros2"))
         self.assertEqual(paths.state, Path("/state/lazyros2"))
@@ -45,13 +45,13 @@ class XdgPathsTests(unittest.TestCase):
                 "XDG_CACHE_HOME": "relative",
                 "XDG_RUNTIME_DIR": "relative",
             },
-            home=Path("/home/nanato"),
+            home=Path("/home/tester"),
             uid=1010,
         )
 
-        self.assertEqual(paths.config, Path("/home/nanato/.config/lazyros2"))
-        self.assertEqual(paths.state, Path("/home/nanato/.local/state/lazyros2"))
-        self.assertEqual(paths.cache, Path("/home/nanato/.cache/lazyros2"))
+        self.assertEqual(paths.config, Path("/home/tester/.config/lazyros2"))
+        self.assertEqual(paths.state, Path("/home/tester/.local/state/lazyros2"))
+        self.assertEqual(paths.cache, Path("/home/tester/.cache/lazyros2"))
         self.assertEqual(
             paths.runtime,
             Path(tempfile.gettempdir()) / "lazyros2-1010",

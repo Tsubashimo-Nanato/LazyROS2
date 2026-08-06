@@ -8,8 +8,6 @@
 
 LazyROS2 turns common `colcon`, `ros2 run`, `ros2 launch`, and RViz workflows into short, discoverable commands with context-aware completion.
 
-ROS 2 remembers every option. Humans should not have to.
-
 ```console
 $ cd ~/robot_ws
 $ lazy
@@ -17,7 +15,7 @@ $ lazy
 [lazy:robot_ws | ros:jazzy] $ launch navigation_bringup navigation.launch.py
 ```
 
-LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available whenever the wrapper should politely step aside.
+LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available for operations outside the wrapper's scope.
 
 ## Highlights
 
@@ -39,7 +37,7 @@ cd ~/robot_b_ws && lazy
 
 Both instances may run at the same time. Their completion caches, histories, task lists, colors, and overlays stay separate.
 
-LazyROS2 does not currently stack multiple overlays inside one instance. One instance, one workspace—fewer surprises, and considerably fewer haunted terminals.
+LazyROS2 does not currently stack multiple overlays inside one instance. Each instance manages one workspace.
 
 ## Install
 
