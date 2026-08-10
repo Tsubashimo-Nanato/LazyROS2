@@ -34,4 +34,4 @@ All notable changes to LazyROS2 are documented here. The format follows [Keep a 
 
 [Unreleased]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/releases/tag/v0.1.0
+[0.1.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/tree/v0.1.0

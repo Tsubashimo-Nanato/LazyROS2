@@ -47,7 +47,7 @@ cd LazyROS2
 sh install.sh
 ```
 
-安装后重新打开终端。LazyROS2 不会安装或修改 ROS 2。首次安装流程会在 [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) 中继续简化；校验、自定义 rc、升级和恢复说明见[安装指南](docs/install-layout.md)。
+安装后重新打开终端。LazyROS2 不会安装或修改 ROS 2。校验、自定义 rc、升级、卸载和恢复说明均见[安装指南](docs/install-layout.md)；[Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) 用于跟踪后续首次使用体验改进。
 
 ## 日常使用
 
@@ -88,7 +88,7 @@ x86_64 上支持 Bash 和 zsh；arm64 为 best-effort，并已在 Ubuntu 22.04 +
 
 - [命令参考](docs/commands.md)
 - [安装与卸载](docs/install-layout.md)
-- [验证矩阵](docs/validation.md)
+- [v0.1 历史验证记录](docs/validation.md)
 - [Jetson Humble smoke 报告](docs/jetson-humble-smoke-2026-07-11.md)
 - [参与开发](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

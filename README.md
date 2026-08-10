@@ -47,7 +47,7 @@ cd LazyROS2
 sh install.sh
 ```
 
-Open a new terminal after installation. LazyROS2 never installs or modifies ROS 2. The first-time installation flow is being simplified further in [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18); verification, custom rc handling, upgrade, and recovery details live in the [install guide](docs/install-layout.md).
+Open a new terminal after installation. LazyROS2 never installs or modifies ROS 2. Verification, custom rc handling, upgrades, uninstall, and recovery are documented in the [install guide](docs/install-layout.md); [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) tracks planned first-run UX improvements.
 
 ## Daily workflow
 
@@ -88,7 +88,7 @@ Bash and zsh are supported on x86_64. arm64 is best-effort and smoke-tested on U
 
 - [Command reference](docs/commands.md)
 - [Install and uninstall](docs/install-layout.md)
-- [Validation matrix](docs/validation.md)
+- [Historical v0.1 validation record](docs/validation.md)
 - [Jetson Humble smoke report](docs/jetson-humble-smoke-2026-07-11.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
