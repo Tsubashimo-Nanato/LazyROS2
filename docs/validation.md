@@ -1,6 +1,6 @@
-# v0.1.0 validation record
+# Historical v0.1.0 validation record
 
-Validation recorded on 2026-07-10 used the same source tree and `tests/ros_smoke.sh` in every ROS image. No ROS package manager or Python runtime dependency was installed by LazyROS2.
+This document preserves the validation record for the v0.1.0 release; it does not describe the current v0.2.x tree. Validation recorded on 2026-07-10 used the v0.1.0 source tree and `tests/ros_smoke.sh` in every ROS image. No ROS package manager or Python runtime dependency was installed by LazyROS2.
 
 ## Supported ROS matrix
 
@@ -16,7 +16,7 @@ Each environment creates two disposable `ament_cmake` packages with a workspace 
 
 ## Fedora experimental acceptance
 
-The experimental host was Fedora 44 x86_64 with zsh 5.9, a ROS 2 Jazzy micromamba environment, ros2cli 0.32.9, colcon-core 0.21.0, and Python 3.14.6. The checkout path was `/home/nanato/LazyRos`; every installer check used a temporary HOME and every ROS check used a temporary workspace.
+The experimental host was Fedora 44 x86_64 with zsh 5.9, a ROS 2 Jazzy micromamba environment, ros2cli 0.32.9, colcon-core 0.21.0, and Python 3.14.6. The checkout path was `~/LazyRos`; every installer check used a temporary HOME and every ROS check used a temporary workspace.
 
 Validated host behavior included:
 

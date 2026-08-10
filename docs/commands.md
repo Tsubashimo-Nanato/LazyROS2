@@ -66,7 +66,7 @@ lazy launch demo bringup.launch.py use_sim_time:=true
 
 任务窗口在进程成功、失败或收到 Ctrl+C 后保持打开，并回到任务 prompt。首次命令只放在该窗口的内存历史中；上箭头、回车即可重新运行。每次重启前重新读取 workspace 的 `install/local_setup.*`。
 
-控制 shell 中的 build/test/run/launch/RViz 自动创建任务窗口；普通 CLI 在当前前台执行。没有图形会话或终端适配器时会明确报错，不会静默改变运行位置。GNOME Terminal 是 v0.1 的正式窗口适配器；其他适配器为 experimental。
+控制 shell 中的 build/test/run/launch/RViz 自动创建任务窗口；普通 CLI 在当前前台执行。没有图形会话或终端适配器时会明确报错，不会静默改变运行位置。GNOME Terminal 是 v0.2 的正式窗口适配器；其他适配器为 experimental。
 
 ## ROS graph、bag 与 package
 

@@ -1,4 +1,4 @@
-<p align="right"><a href="./README.md">English</a></p>
+<p align="right"><a href="./README.md">English</a> / <a href="./README.ja.md">日本語</a> / 简体中文</p>
 
 # LazyROS2
 
@@ -8,8 +8,6 @@
 
 LazyROS2 把常用的 `colcon`、`ros2 run`、`ros2 launch` 和 RViz 工作流整理成简短、可发现、支持上下文补全的命令。
 
-ROS 2 很擅长记住参数，人类不必也这么擅长。
-
 ```console
 $ cd ~/robot_ws
 $ lazy
@@ -17,7 +15,7 @@ $ lazy
 [lazy:robot_ws | ros:jazzy] $ launch navigation_bringup navigation.launch.py
 ```
 
-LazyROS2 不会替代 `ros2` 或 `colcon`。需要高级用法时，原生命令始终可以接手。
+LazyROS2 不会替代 `ros2` 或 `colcon`。超出包装器范围的操作仍可使用原生命令。
 
 ## 主要能力
 
@@ -39,7 +37,7 @@ cd ~/robot_b_ws && lazy
 
 两个实例可以同时运行。它们的补全缓存、历史、任务列表、配色和 overlay 彼此隔离。
 
-LazyROS2 暂不支持在同一个实例中叠加多层 overlay。一个实例，一个 workspace——少一点意外，也少一点终端闹鬼。
+LazyROS2 暂不支持在同一个实例中叠加多层 overlay。每个实例管理一个 workspace。
 
 ## 安装
 
@@ -49,7 +47,7 @@ cd LazyROS2
 sh install.sh
 ```
 
-安装后重新打开终端。LazyROS2 不会安装或修改 ROS 2。首次安装流程会在 [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) 中继续简化；校验、自定义 rc、升级和恢复说明见[安装指南](docs/install-layout.md)。
+安装后重新打开终端。LazyROS2 不会安装或修改 ROS 2。校验、自定义 rc、升级、卸载和恢复说明均见[安装指南](docs/install-layout.md)；[Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) 用于跟踪后续首次使用体验改进。
 
 ## 日常使用
 
@@ -90,7 +88,7 @@ x86_64 上支持 Bash 和 zsh；arm64 为 best-effort，并已在 Ubuntu 22.04 +
 
 - [命令参考](docs/commands.md)
 - [安装与卸载](docs/install-layout.md)
-- [验证矩阵](docs/validation.md)
+- [v0.1 历史验证记录](docs/validation.md)
 - [Jetson Humble smoke 报告](docs/jetson-humble-smoke-2026-07-11.md)
 - [参与开发](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

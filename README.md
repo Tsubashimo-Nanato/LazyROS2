@@ -1,4 +1,4 @@
-<p align="right"><a href="./README.zh-CN.md">简体中文</a></p>
+<p align="right">English / <a href="./README.ja.md">日本語</a> / <a href="./README.zh-CN.md">简体中文</a></p>
 
 # LazyROS2
 
@@ -8,8 +8,6 @@
 
 LazyROS2 turns common `colcon`, `ros2 run`, `ros2 launch`, and RViz workflows into short, discoverable commands with context-aware completion.
 
-ROS 2 remembers every option. Humans should not have to.
-
 ```console
 $ cd ~/robot_ws
 $ lazy
@@ -17,7 +15,7 @@ $ lazy
 [lazy:robot_ws | ros:jazzy] $ launch navigation_bringup navigation.launch.py
 ```
 
-LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available whenever the wrapper should politely step aside.
+LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available for operations outside the wrapper's scope.
 
 ## Highlights
 
@@ -39,7 +37,7 @@ cd ~/robot_b_ws && lazy
 
 Both instances may run at the same time. Their completion caches, histories, task lists, colors, and overlays stay separate.
 
-LazyROS2 does not currently stack multiple overlays inside one instance. One instance, one workspace—fewer surprises, and considerably fewer haunted terminals.
+LazyROS2 does not currently stack multiple overlays inside one instance. Each instance manages one workspace.
 
 ## Install
 
@@ -49,7 +47,7 @@ cd LazyROS2
 sh install.sh
 ```
 
-Open a new terminal after installation. LazyROS2 never installs or modifies ROS 2. The first-time installation flow is being simplified further in [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18); verification, custom rc handling, upgrade, and recovery details live in the [install guide](docs/install-layout.md).
+Open a new terminal after installation. LazyROS2 never installs or modifies ROS 2. Verification, custom rc handling, upgrades, uninstall, and recovery are documented in the [install guide](docs/install-layout.md); [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) tracks planned first-run UX improvements.
 
 ## Daily workflow
 
@@ -90,7 +88,7 @@ Bash and zsh are supported on x86_64. arm64 is best-effort and smoke-tested on U
 
 - [Command reference](docs/commands.md)
 - [Install and uninstall](docs/install-layout.md)
-- [Validation matrix](docs/validation.md)
+- [Historical v0.1 validation record](docs/validation.md)
 - [Jetson Humble smoke report](docs/jetson-humble-smoke-2026-07-11.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

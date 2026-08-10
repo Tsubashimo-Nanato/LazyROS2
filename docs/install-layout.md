@@ -1,13 +1,13 @@
 # 安装、manifest 与卸载边界
 
-LazyROS2 v0.1 只提供无 `sudo` 的单用户安装。安装器不调用 apt、dnf、pip，也不安装 ROS 2。
+LazyROS2 v0.2 只提供无 `sudo` 的单用户安装。安装器不调用 apt、dnf、pip，也不安装 ROS 2。
 
 ## 固定布局
 
 ```text
 ~/.local/bin/lazy
 ~/.local/lib/lazyros2/
-├── 0.1.0/
+├── 0.2.0/
 │   ├── bin/lazy
 │   ├── install.sh
 │   ├── src/
@@ -15,7 +15,7 @@ LazyROS2 v0.1 只提供无 `sudo` 的单用户安装。安装器不调用 apt、
 │   ├── VERSION
 │   ├── LICENSE
 │   └── pyproject.toml
-└── current -> 0.1.0
+└── current -> 0.2.0
 ~/.local/share/lazyros2/install-manifest.json
 ```
 
@@ -63,12 +63,12 @@ manifest 是 UTF-8 JSON，权限为 `0600`。核心字段如下：
 {
   "schema_version": 1,
   "app": "LazyROS2",
-  "app_version": "0.1.0",
+  "app_version": "0.2.0",
   "license": "AGPL-3.0-or-later",
   "home": "/home/example",
   "installed_at": "2026-07-10T00:00:00+00:00",
   "source": {
-    "ref": "v0.1.0",
+    "ref": "v0.2.0",
     "commit": "<40-hex commit>"
   },
   "files": [],
@@ -136,7 +136,7 @@ rc 更新、每个受管文件 unlink、manifest unlink 都是可重放的持久
 正式 release 提供：
 
 ```text
-lazyros2-0.1.0.tar.gz
+lazyros2-0.2.0.tar.gz
 SHA256SUMS
 ```
 

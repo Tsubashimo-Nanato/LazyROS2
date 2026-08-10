@@ -4,7 +4,7 @@
 
 **PASS**
 
-- Target: `jetson@192.168.0.38` (`yahboom`)
+- Target: Jetson Orin Nano / aarch64 test host
 - OS: Ubuntu 22.04
 - Architecture: aarch64 / NVIDIA Tegra kernel `5.15.148-tegra`
 - ROS: ROS 2 Humble from `/opt/ros/humble`
