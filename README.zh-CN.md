@@ -1,4 +1,4 @@
-<p align="right"><a href="./README.md">English</a></p>
+<p align="right"><a href="./README.md">English</a> / <a href="./README.ja.md">日本語</a> / 简体中文</p>
 
 # LazyROS2
 
