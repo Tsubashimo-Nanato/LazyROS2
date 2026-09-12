@@ -37,8 +37,10 @@ from lazyros2.environment import (
     capture_overlay_environment,
     find_self_overlay,
     validated_setup_script,
+    without_workspace_overlay,
 )
 from lazyros2.jobs import JobRegistry, JobRegistryError, JobState
+from lazyros2.graph_cache import GraphCache, GraphSnapshot
 from lazyros2.paths import Workspace, WorkspaceError, XdgPaths
 from lazyros2.process import normalize_returncode, run_command
 from lazyros2.storage import ensure_private_directory
@@ -175,7 +177,7 @@ def _load_baseline(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def _write_private_json(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_directory(path.parent)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.",
         dir=path.parent,
@@ -212,10 +214,10 @@ def _runtime_environment(
     *,
     overlay_timeout: float = 10.0,
 ) -> dict[str, str]:
-    if find_self_overlay(workspace, env):
+    if not env.get("LAZYROS_BASELINE_FILE") and find_self_overlay(workspace, env):
         return dict(env)
 
-    baseline = _load_baseline(env)
+    baseline = _runtime_base(workspace, env)
     setup = workspace.install / "local_setup.sh"
     if not setup.is_file():
         return baseline
@@ -226,42 +228,48 @@ def _runtime_environment(
     )
 
 
+def _runtime_base(workspace: Workspace, env: Mapping[str, str]) -> dict[str, str]:
+    # The saved snapshot belongs to build/test. Runtime follows exports and
+    # unsets made in the current shell, then rebuilds only its workspace paths.
+    if env.get("LAZYROS_BASELINE_FILE"):
+        return without_workspace_overlay(workspace, env)
+    return dict(env)
+
+
 def _mark_completion_dirty(workspace: Workspace, env: Mapping[str, str]) -> None:
     paths = _xdg(env)
     cache = CompletionCache(paths.cache / "completion")
-    environments: list[tuple[str, dict[str, str]]] = [
-        ("runtime", dict(env)),
-        ("launch", dict(env)),
-    ]
     try:
         baseline = _load_baseline(env)
-        environments.append(("packages", baseline))
-        setup = validated_setup_script(workspace, "sh")
-        runtime = (
-            baseline
-            if setup is None
-            else capture_overlay_environment(workspace, baseline)
-        )
-        environments.extend((("runtime", runtime), ("launch", runtime)))
-    except (LazyError, OverlayEnvironmentError, OSError):
+    except (LazyError, OSError):
         # A successful build must not be turned into a failure by optional cache work.
-        pass
-
-    marked: set[str] = set()
-    for domain, candidate in environments:
-        key = _completion_cache_key(
-            cache,
-            workspace,
-            candidate,
-            domain,
-        )
-        if key in marked:
-            continue
+        return
+    for domain in ("packages", "runtime", "launch"):
         try:
+            selected_env = baseline if domain == "packages" else _runtime_base(workspace, env)
+            key = _completion_cache_key(cache, workspace, selected_env, domain)
             cache.mark_dirty(key)
-        except TimeoutError:
+        except (CompletionError, OSError, TimeoutError):
             continue
-        marked.add(key)
+
+
+def _overlay_generation_file(workspace: Workspace, paths: XdgPaths) -> Path:
+    key = hashlib.sha256(str(workspace.root).encode("utf-8")).hexdigest()
+    return paths.runtime / "overlay-generations" / f"{key}.json"
+
+
+def _notify_build_success(workspace: Workspace) -> None:
+    # A sibling task window cannot source the control shell. Its next prompt
+    # observes this token and reloads the validated setup exactly once.
+    try:
+        _write_private_json(_overlay_generation_file(workspace, _xdg()), time.time_ns())
+    except OSError as error:
+        print(
+            f"lazy: build succeeded, but the control shell could not be notified: {error}. "
+            "Reopen lazy to reload its workspace environment.",
+            file=sys.stderr,
+        )
+    _mark_completion_dirty(workspace, os.environ)
 
 
 def _run(
@@ -310,7 +318,7 @@ def _build(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
     )
     exit_code = _run(command, workspace, baseline)
     if exit_code == 0:
-        _mark_completion_dirty(workspace, os.environ)
+        _notify_build_success(workspace)
         if not os.environ.get("LAZYROS_ACTIVE"):
             print(
                 "Build finished. This CLI process cannot update its parent shell; "
@@ -334,7 +342,7 @@ def _build(args: argparse.Namespace, passthrough: Sequence[str]) -> int:
     retry = build_argv(workspace, packages, up_to=True, passthrough=passthrough)
     retry_code = _run(retry, workspace, baseline)
     if retry_code == 0:
-        _mark_completion_dirty(workspace, os.environ)
+        _notify_build_success(workspace)
     return retry_code
 
 
@@ -512,12 +520,19 @@ def _spawn_job(
         )
 
     registry = _job_registry(paths)
+    baseline = _baseline_for_build(workspace, os.environ)
     job = registry.register(
         workspace.root,
         command[0],
         target,
         command,
     )
+    baseline_file = registry.baseline_path(workspace.root, job.number)
+    try:
+        _write_private_json(baseline_file, baseline)
+    except OSError:
+        registry.remove(workspace.root, job.number)
+        raise
     shell_name = _current_shell()
     program = (
         *_launcher_argv(),
@@ -534,6 +549,7 @@ def _spawn_job(
     terminal_argv = adapter.command(title, program)
     job_env = dict(os.environ)
     job_env["LAZYROS_WORKSPACE"] = str(workspace.root)
+    job_env["LAZYROS_BASELINE_FILE"] = str(baseline_file)
     try:
         terminal_process = subprocess.Popen(
             terminal_argv,
@@ -610,6 +626,7 @@ def _start_controller(shell_name: str) -> int:
             "LAZYROS_APP_ROOT": str(_app_root()),
             "LAZYROS_BASELINE_FILE": str(baseline_file),
             "LAZYROS_HISTORY_FILE": str(history_file),
+            "LAZYROS_OVERLAY_GENERATION_FILE": str(_overlay_generation_file(workspace, paths)),
             "LAZYROS_LAUNCHER": _launcher_argv()[0],
             "LAZYROS_SHELL": shell_name,
             "LAZYROS_WORKSPACE": str(workspace.root),
@@ -637,6 +654,7 @@ def _start_job_shell(job_id: str, shell_name: str) -> int:
         {
             "LAZYROS_ACTIVE": "job",
             "LAZYROS_APP_ROOT": str(_app_root()),
+            "LAZYROS_BASELINE_FILE": str(registry.baseline_path(job.workspace, job.number)),
             "LAZYROS_COLOR_ACCENT": color.accent,
             "LAZYROS_COLOR_BACKGROUND": color.background,
             "LAZYROS_COLOR_FOREGROUND": color.foreground,
@@ -1001,24 +1019,29 @@ def _watch_ros_list(
 ) -> int:
     iterations = 0
     interactive = sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb"
-    command = ("ros2", domain, "list")
     while True:
-        result = run_command(
-            command,
-            cwd=workspace.root,
-            env=env,
-            capture_output=True,
+        snapshot = _graph_snapshot(
+            domain,
+            workspace,
+            time.monotonic() + COMPLETION_BUDGET_SECONDS,
+            runtime=env,
+            raw_lines=domain == "param",
         )
         if interactive:
             print("\033[2J\033[H", end="")
         print(f"{domain} list · {time.strftime('%H:%M:%S')}")
-        output = result.stdout if result.exit_code == 0 else result.stderr
-        print(output.rstrip() or "(empty)")
+        if snapshot.values is None:
+            print("(unavailable)")
+        else:
+            print("\n".join(snapshot.values) or "(empty)")
+        if snapshot.error:
+            state = "Graph unavailable" if snapshot.values is None else "Stale graph"
+            print(f"{state}: {snapshot.error}", file=sys.stderr)
         iterations += 1
-        if result.exit_code != 0 or (
+        if snapshot.error or (
             max_iterations is not None and iterations >= max_iterations
         ):
-            return result.exit_code
+            return snapshot.error_code or (3 if snapshot.error else 0)
         if not interactive:
             return 0
         time.sleep(interval)
@@ -1074,7 +1097,12 @@ def _pkg(args: argparse.Namespace) -> int:
         build_type,
         *dependencies,
     )
-    return _run(command, workspace, runtime, cwd=workspace.src)
+    if not workspace.src.is_dir():
+        raise UsageError(f"package creation requires a source directory: {workspace.src}")
+    code = _run(command, workspace, runtime, cwd=workspace.src)
+    if code == 0:
+        _mark_completion_dirty(workspace, os.environ)
+    return code
 
 
 def _interface(args: argparse.Namespace) -> int:
@@ -1121,15 +1149,9 @@ def _completion_cache_state(
 ) -> str:
     paths = _xdg(env)
     try:
-        runtime = _runtime_environment(workspace, env)
+        baseline = _runtime_base(workspace, env)
         cache = CompletionCache(paths.cache / "completion")
-        key = cache.key(
-            workspace,
-            runtime,
-            shutil.which("ros2", path=runtime.get("PATH")) or "ros2",
-            shutil.which("colcon", path=runtime.get("PATH")) or "colcon",
-            domain="runtime",
-        )
+        key = _completion_cache_key(cache, workspace, baseline, "runtime")
         snapshot = cache.read(key)
     except (CompletionError, OverlayEnvironmentError, OSError) as exc:
         return f"unavailable ({exc})"
@@ -1156,7 +1178,7 @@ def _completion_snapshot(
                 key,
                 lambda: CompletionCollector().collect(
                     workspace,
-                    env,
+                    _completion_runtime_environment(workspace, env, deadline),
                     deadline=deadline,
                 ),
                 lock_timeout=(
@@ -1177,19 +1199,14 @@ def _completion_cache_context(
     deadline: float | None = None,
 ) -> tuple[dict[str, str], CompletionCache, str]:
     paths = _xdg()
-    if env is None:
-        overlay_timeout = (
-            10.0
-            if deadline is None
-            else max(0.001, deadline - time.monotonic())
-        )
-        selected_env = _runtime_environment(
-            workspace,
-            os.environ,
-            overlay_timeout=overlay_timeout,
-        )
-    else:
+    # Cache lookup uses current exports and file stamps. Sourcing an overlay
+    # belongs inside the collector; otherwise every warm Tab starts another shell.
+    if env is not None:
         selected_env = dict(env)
+    elif domain == "packages":
+        selected_env = _load_baseline(os.environ)
+    else:
+        selected_env = _runtime_base(workspace, os.environ)
     cache = CompletionCache(paths.cache / "completion")
     key = _completion_cache_key(
         cache,
@@ -1206,12 +1223,38 @@ def _completion_cache_key(
     env: Mapping[str, str],
     domain: str,
 ) -> str:
+    fingerprint = ""
+    if domain in {"runtime", "launch"}:
+        stamps = []
+        for path in (
+            workspace.install / "local_setup.sh",
+            _overlay_generation_file(workspace, _xdg()),
+        ):
+            try:
+                metadata = path.stat()
+                stamps.append((str(path), metadata.st_mtime_ns, metadata.st_size))
+            except FileNotFoundError:
+                stamps.append((str(path), None, None))
+        fingerprint = hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
     return cache.key(
         workspace,
         env,
         shutil.which("ros2", path=env.get("PATH")) or "ros2",
         shutil.which("colcon", path=env.get("PATH")) or "colcon",
         domain=domain,
+        overlay_fingerprint=fingerprint,
+    )
+
+
+def _completion_runtime_environment(
+    workspace: Workspace,
+    baseline: Mapping[str, str],
+    deadline: float | None,
+) -> dict[str, str]:
+    return _runtime_environment(
+        workspace,
+        baseline,
+        overlay_timeout=10.0 if deadline is None else _completion_remaining(deadline),
     )
 
 
@@ -1247,7 +1290,7 @@ def _completion_snapshot_after_dirty(workspace: Workspace) -> CompletionData:
         cache.mark_dirty(key)
     cached = cache.refresh(
         runtime_key,
-        lambda: CompletionCollector().collect(workspace, env),
+        lambda: CompletionCollector().collect(workspace, _completion_runtime_environment(workspace, env, None)),
     )
     if cached.stale:
         raise CompletionError(
@@ -1394,7 +1437,7 @@ def _completion_data_for_command(
         def collect_launches() -> CompletionData:
             launches, ambiguities = collector.collect_launches(
                 workspace,
-                env,
+                _completion_runtime_environment(workspace, env, deadline),
                 deadline=deadline,
             )
             return CompletionData(
@@ -1436,21 +1479,48 @@ def _collect_completion_objects(
     workspace: Workspace,
     deadline: float,
 ) -> tuple[str, ...]:
-    if command == "interface":
-        argv = ("ros2", "interface", "list")
-    elif command == "pkg":
-        argv = ("ros2", "pkg", "list")
-    elif command in {"param", "node"}:
-        argv = ("ros2", "node", "list")
-    elif command == "bag":
-        argv = ("ros2", "topic", "list")
-    else:
-        argv = ("ros2", command, "list")
-    env = _runtime_environment(
-        workspace,
-        os.environ,
-        overlay_timeout=_completion_remaining(deadline),
+    domain = {"bag": "topic", "param": "node"}.get(command, command)
+    return _graph_snapshot(domain, workspace, deadline).require_values()
+
+
+def _graph_snapshot(
+    domain: str,
+    workspace: Workspace,
+    deadline: float,
+    *,
+    runtime: Mapping[str, str] | None = None,
+    raw_lines: bool = False,
+) -> GraphSnapshot:
+    identity_env = _runtime_base(workspace, os.environ)
+    cache = GraphCache(_xdg().completion / "graph")
+    key = cache.key(
+        domain,
+        workspace.root,
+        identity_env,
+        shutil.which("ros2", path=identity_env.get("PATH")),
     )
+
+    def collect() -> tuple[str, ...]:
+        try:
+            selected_env = runtime if runtime is not None else _runtime_environment(
+                workspace, os.environ, overlay_timeout=_completion_remaining(deadline)
+            )
+        except OverlayEnvironmentError as error:
+            raise CompletionError(str(error)) from error
+        return _query_graph_objects(domain, workspace, selected_env, deadline, raw_lines=raw_lines)
+
+    return cache.get(key, collect)
+
+
+def _query_graph_objects(
+    command: str,
+    workspace: Workspace,
+    env: Mapping[str, str],
+    deadline: float,
+    *,
+    raw_lines: bool = False,
+) -> tuple[str, ...]:
+    argv = ("ros2", command, "list")
     result = run_command(
         argv,
         cwd=workspace.root,
@@ -1467,13 +1537,16 @@ def _collect_completion_objects(
         )
     values = []
     for line in result.stdout.splitlines():
+        if raw_lines:
+            values.append(line)
+            continue
         value = line.strip()
         if not value or value.endswith(":"):
             continue
         if command == "interface" and "/" not in value:
             continue
         values.append(value)
-    return tuple(sorted(set(values)))
+    return tuple(values) if raw_lines else tuple(sorted(set(values)))
 
 
 def _completion_remaining(deadline: float) -> float:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 from pathlib import Path
 import select
@@ -544,7 +545,6 @@ esac
         script = ROOT / "shell" / f"lazy-{integration}.zsh"
         (zdotdir / ".zshrc").write_text(
             f"source {shlex.quote(str(script))}\n"
-            "setopt complete_in_word\n"
             "PROMPT='ZCOMP> '\n"
             "RPROMPT=\n",
             encoding="utf-8",
@@ -782,6 +782,251 @@ esac
                 child.expect(self.PROMPT)
                 child.send(b"exit\r")
                 self.assertEqual(child.wait(), 0, bytes(child.output))
+
+
+class PromptOverlayTests(unittest.TestCase):
+    def _check_generation_reload(self, shell_name: str) -> None:
+        shell = shutil.which(shell_name)
+        if shell is None or os.name != "posix":
+            self.skipTest(f"requires POSIX {shell_name}")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "robot_ws"
+            (workspace / "src").mkdir(parents=True)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            lazy = fake_bin / "lazy"
+            lazy.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$LAZYROS_TEST_SETUP"\n',
+                encoding="utf-8",
+            )
+            lazy.chmod(0o755)
+            generation = root / "generation"
+            generation.write_text("1\n", encoding="utf-8")
+            setup = root / "setup"
+            setup.write_text(
+                'printf "loaded\\n" >> "$LAZYROS_TEST_LOADS"\n'
+                'export LAZYROS_TEST_VERSION=$(command cat "$LAZYROS_OVERLAY_GENERATION_FILE")\n'
+                '[[ $LAZYROS_TEST_VERSION != 3 || -f $LAZYROS_TEST_ALLOW_THREE ]]\n',
+                encoding="utf-8",
+            )
+            env = dict(os.environ)
+            env.update(
+                HOME=str(root),
+                PATH=str(fake_bin) + os.pathsep + env.get("PATH", ""),
+                TERM="dumb",
+                LAZYROS_WORKSPACE=str(workspace),
+                LAZYROS_HISTORY_FILE=str(root / "history"),
+                LAZYROS_OVERLAY_GENERATION_FILE=str(generation),
+                LAZYROS_TEST_SETUP=str(setup),
+                LAZYROS_TEST_LOADS=str(root / "loads"),
+                LAZYROS_TEST_ALLOW_THREE=str(root / "allow-three"),
+            )
+            control = ROOT / "shell" / f"lazy-control.{shell_name}"
+            script = f"source {shlex.quote(str(control))}\n" + """
+_lazyros_check_overlay
+printf '2\n' > "$LAZYROS_OVERLAY_GENERATION_FILE"
+false
+_lazyros_check_overlay
+printf 'STATUS:%s VERSION:%s\n' "$?" "$LAZYROS_TEST_VERSION"
+_lazyros_check_overlay
+printf '3\n' > "$LAZYROS_OVERLAY_GENERATION_FILE"
+_lazyros_check_overlay
+touch "$LAZYROS_TEST_ALLOW_THREE"
+_lazyros_check_overlay
+_lazyros_check_overlay
+printf 'FINAL:%s\n' "$LAZYROS_TEST_VERSION"
+"""
+            args = [shell, "--noprofile", "--norc"] if shell_name == "bash" else [shell, "-d", "-f"]
+            completed = subprocess.run(
+                [*args, "-c", script],
+                env=env,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("STATUS:1 VERSION:2", completed.stdout)
+            self.assertIn("FINAL:3", completed.stdout)
+            self.assertIn("failed to load workspace overlay", completed.stderr)
+            self.assertEqual((root / "loads").read_text().splitlines(), ["loaded"] * 4)
+
+    def test_bash_reload_tracks_successful_build_generations(self) -> None:
+        self._check_generation_reload("bash")
+
+    def test_zsh_reload_tracks_successful_build_generations(self) -> None:
+        self._check_generation_reload("zsh")
+
+
+@unittest.skipUnless(os.name == "posix" and pty is not None, "requires POSIX PTYs")
+class LiteralCompletionPtyTests(unittest.TestCase):
+    PROMPT = b"LITERAL> "
+
+    def _spawn(
+        self,
+        root: Path,
+        shell_name: str,
+        integration: str,
+        candidates: tuple[str, ...],
+    ) -> PtyShell:
+        shell = shutil.which(shell_name)
+        if shell is None:
+            self.skipTest(f"{shell_name} is not installed")
+        workspace = root / "robot_ws"
+        (workspace / "src").mkdir(parents=True)
+        home = root / "home"
+        home.mkdir()
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        candidate_file = root / "candidates"
+        candidate_file.write_text("\n".join(candidates) + "\n", encoding="utf-8")
+        completion_script = root / "complete.py"
+        completion_script.write_text(
+            "import os, pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "shell = args[args.index('--shell') + 1]\n"
+            "cursor = int(args[args.index('--cursor') + 1]) - (shell == 'zsh')\n"
+            "words = args[args.index('--') + 1:]\n"
+            "prefix = words[cursor] if cursor < len(words) else ''\n"
+            "candidates = pathlib.Path(os.environ['LAZYROS_TEST_CANDIDATES']).read_text(encoding='utf-8').splitlines()\n"
+            "for candidate in candidates:\n"
+            "    if candidate.startswith(prefix):\n"
+            "        print(candidate)\n",
+            encoding="utf-8",
+        )
+        lazy = fake_bin / "lazy"
+        lazy.write_text(
+            """#!/bin/sh
+case ${1-} in
+    __setup-path) exit 0 ;;
+    __complete) exec "$LAZYROS_TEST_PYTHON" "$LAZYROS_TEST_COMPLETE" "$@" ;;
+    __select)
+        PYTHONPATH="$LAZYROS_TEST_SOURCE" \
+            exec "$LAZYROS_TEST_PYTHON" -m lazyros2 "$@"
+        ;;
+    *)
+        exec "$LAZYROS_TEST_PYTHON" -c \
+            'import json,sys; print("ARGV:" + json.dumps(sys.argv[1:], ensure_ascii=False))' "$@"
+        ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        lazy.chmod(0o755)
+        env = dict(os.environ)
+        env.update(
+            HOME=str(home),
+            PATH=str(fake_bin) + os.pathsep + env.get("PATH", ""),
+            TERM="xterm-256color",
+            NO_COLOR="1",
+            LAZYROS_HISTORY_FILE=str(root / "history"),
+            LAZYROS_WORKSPACE=str(workspace),
+            LAZYROS_TEST_CANDIDATES=str(candidate_file),
+            LAZYROS_TEST_COMPLETE=str(completion_script),
+            LAZYROS_TEST_SOURCE=str(ROOT / "src"),
+            LAZYROS_TEST_PYTHON=sys.executable,
+        )
+        script = ROOT / "shell" / f"lazy-{integration}.{shell_name}"
+        rcfile = root / (".zshrc" if shell_name == "zsh" else "bashrc")
+        rcfile.write_text(
+            f"source {shlex.quote(str(script))}\n"
+            "PS1='LITERAL> '\n"
+            + ("RPROMPT=\n" if shell_name == "zsh" else ""),
+            encoding="utf-8",
+        )
+        if shell_name == "zsh":
+            env["ZDOTDIR"] = str(root)
+            argv = [str(Path(shell).resolve()), "-d", "-i"]
+        else:
+            argv = [str(Path(shell).resolve()), "--noprofile", "--rcfile", str(rcfile), "-i"]
+        child = PtyShell(argv, cwd=workspace, env=env)
+        child.expect(self.PROMPT)
+        return child
+
+    def _expect_argv(self, child: PtyShell, *arguments: str) -> None:
+        expected = "ARGV:" + json.dumps(arguments, ensure_ascii=False)
+        child.expect(expected.encode("utf-8"))
+        child.expect(self.PROMPT)
+
+    def test_unique_candidate_is_one_literal_argument(self) -> None:
+        candidate = 'map "quote" \'single\' $(touch marker) * ; 日本.rviz'
+        for shell_name in ("bash", "zsh"):
+            for integration in ("init", "control"):
+                with self.subTest(shell=shell_name, integration=integration):
+                    with tempfile.TemporaryDirectory() as temp:
+                        root = Path(temp)
+                        with self._spawn(root, shell_name, integration, (candidate,)) as child:
+                            child.send(b"lazy rviz map\t\r")
+                            self._expect_argv(child, "rviz", candidate)
+                            self.assertFalse((root / "robot_ws" / "marker").exists())
+
+    def test_common_prefix_and_picker_keep_metacharacters_literal(self) -> None:
+        prefix = "map $(touch marker) 'quoted' * 日本 "
+        candidates = (prefix + "one.rviz", prefix + "two.rviz")
+        for shell_name in ("bash", "zsh"):
+            for integration in ("init", "control"):
+                with self.subTest(shell=shell_name, integration=integration):
+                    with tempfile.TemporaryDirectory() as temp:
+                        root = Path(temp)
+                        with self._spawn(root, shell_name, integration, candidates) as child:
+                            child.send(b"lazy rviz map\t")
+                            child.read_for(0.2)
+                            child.send(b"\t")
+                            child.expect(b"[1/2]")
+                            child.send(b"\x1b[B\r extra\r")
+                            self._expect_argv(child, "rviz", candidates[1], "extra")
+                            self.assertFalse((root / "robot_ws" / "marker").exists())
+
+    def test_picker_replaces_an_open_quoted_token(self) -> None:
+        candidates = ("map one.rviz", "map two.rviz")
+        for shell_name in ("bash", "zsh"):
+            for quote in (b"'", b'"'):
+                with self.subTest(shell=shell_name, quote=quote):
+                    with tempfile.TemporaryDirectory() as temp:
+                        with self._spawn(Path(temp), shell_name, "control", candidates) as child:
+                            child.send(b"lazy rviz " + quote + b"map \t")
+                            child.read_for(0.2)
+                            child.send(b"\t")
+                            child.expect(b"[1/2]")
+                            child.send(b"\r\r")
+                            self._expect_argv(child, "rviz", candidates[0])
+
+    def test_aborted_line_resets_first_tab_before_new_completion(self) -> None:
+        candidates = ("alpha", "beta")
+        for shell_name in ("bash", "zsh"):
+            with self.subTest(shell=shell_name):
+                with tempfile.TemporaryDirectory() as temp:
+                    with self._spawn(Path(temp), shell_name, "control", candidates) as child:
+                        child.send(b"lazy \t")
+                        child.read_for(0.2)
+                        child.send(b"\x03")
+                        child.expect(self.PROMPT)
+                        start = len(child.output)
+                        child.send(b"lazy \t")
+                        child.read_for(0.2)
+                        self.assertNotIn(b"[1/2]", child.output[start:])
+                        child.send(b"\t")
+                        child.expect(b"[1/2]")
+                        child.send(b"\r\r")
+                        self._expect_argv(child, candidates[0])
+
+    def test_cursor_completion_preserves_suffix_and_following_argument(self) -> None:
+        for shell_name in ("bash", "zsh"):
+            for integration in ("init", "control"):
+                for multiple in (False, True):
+                    with self.subTest(shell=shell_name, integration=integration, multiple=multiple):
+                        candidates = ("map one.rviz", "map two.rviz") if multiple else ("map one.rviz",)
+                        with tempfile.TemporaryDirectory() as temp:
+                            with self._spawn(Path(temp), shell_name, integration, candidates) as child:
+                                child.send(b"lazy rviz map.rviz trailing\x01" + b"\x1b[C" * 13 + b"\t")
+                                child.read_for(0.2)
+                                if multiple:
+                                    child.send(b"\t")
+                                    child.expect(b"[1/2]")
+                                    child.send(b"\r")
+                                child.send(b"\r")
+                                self._expect_argv(child, "rviz", candidates[0], "trailing")
 
 
 if __name__ == "__main__":

@@ -15,14 +15,32 @@ fi
 
 _lazyros_reload_overlay()
 {
-    local setup_file=
+    local setup_file='' generation=''
+    if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
+        IFS= read -r generation <"$LAZYROS_OVERLAY_GENERATION_FILE"
+    fi
 
     setup_file=$(command lazy __setup-path --shell bash) || return $?
-    [[ -n $setup_file ]] || return 0
+    if [[ -n $setup_file ]]; then
+        # Python proved this path remains inside the workspace install tree.
+        # shellcheck disable=SC1090
+        source "$setup_file" || return $?
+    fi
+    _LAZYROS_OVERLAY_GENERATION=$generation
+}
 
-    # Python returned a realpath proven to remain inside this workspace install tree.
-    # shellcheck disable=SC1090
-    source "$setup_file"
+_lazyros_check_overlay()
+{
+    local previous_status=$? generation=
+    if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
+        IFS= read -r generation <"$LAZYROS_OVERLAY_GENERATION_FILE"
+    fi
+    if [[ -n $generation && $generation != "${_LAZYROS_OVERLAY_GENERATION:-}" ]]; then
+        if ! _lazyros_reload_overlay; then
+            printf 'lazy: failed to load workspace overlay: %s/install\n' "$LAZYROS_WORKSPACE" >&2
+        fi
+    fi
+    return "$previous_status"
 }
 
 build()
@@ -180,131 +198,9 @@ lazy()
     esac
 }
 
-_lazyros_second_tab()
-{
-    local candidate
-    local character
-    local common_prefix
-    local context=${READLINE_LINE-}'|'${READLINE_POINT-0}
-    local current_word
-    local end
-    local expected_line
-    local expected_point
-    local -a filtered=()
-    local selected
-    local start=${_LAZYROS_COMPLETION_TOKEN_START:-0}
-
-    bind '"\C-i": complete'
-    if [[ ${_LAZYROS_COMPLETION_EXPECTED:-} != "$context" ]]; then
-        if ((READLINE_POINT < start)) ||
-            [[ ${READLINE_LINE:0:start} != "${_LAZYROS_COMPLETION_EXPECTED:0:start}" ]]; then
-            unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
-            unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
-            return 0
-        fi
-        end=$READLINE_POINT
-        while ((end < ${#READLINE_LINE})); do
-            character=${READLINE_LINE:end:1}
-            [[ $character == [[:space:]] ]] && break
-            ((end += 1))
-        done
-        current_word=${READLINE_LINE:start:READLINE_POINT-start}
-        for candidate in "${_LAZYROS_COMPLETION_CANDIDATES[@]}"; do
-            [[ $candidate == "$current_word"* ]] && filtered+=("$candidate")
-        done
-        if ((${#filtered[@]} == 0)); then
-            unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
-            unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
-            return 0
-        fi
-        common_prefix=${filtered[0]}
-        for candidate in "${filtered[@]:1}"; do
-            while [[ $candidate != "$common_prefix"* ]]; do
-                common_prefix=${common_prefix%?}
-            done
-        done
-        READLINE_LINE=${READLINE_LINE:0:start}${common_prefix}${READLINE_LINE:end}
-        READLINE_POINT=$((start + ${#common_prefix}))
-        if ((${#filtered[@]} > 1)); then
-            expected_line=$READLINE_LINE
-            expected_point=$READLINE_POINT
-            _LAZYROS_COMPLETION_EXPECTED=$expected_line'|'$expected_point
-            _LAZYROS_COMPLETION_PREFIX=$common_prefix
-            _LAZYROS_COMPLETION_CANDIDATES=("${filtered[@]}")
-            bind -x '"\C-i":_lazyros_second_tab'
-            return 0
-        fi
-        unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
-        unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
-        return 0
-    fi
-
-    selected=$(command lazy __select -- "${_LAZYROS_COMPLETION_CANDIDATES[@]}") || selected=
-    if [[ -n $selected ]]; then
-        READLINE_LINE=${READLINE_LINE:0:start}${selected}${READLINE_LINE:READLINE_POINT}
-        READLINE_POINT=$((start + ${#selected}))
-    fi
-    unset _LAZYROS_COMPLETION_EXPECTED _LAZYROS_COMPLETION_TOKEN_START
-    unset _LAZYROS_COMPLETION_PREFIX _LAZYROS_COMPLETION_CANDIDATES
-}
-
-_lazyros_completion_candidates()
-{
-    local cursor=$1
-    local current_word=$2
-    local candidate
-    local common_prefix
-    local expected_line
-    local expected_point
-    shift 2
-    COMPREPLY=()
-
-    while IFS= read -r candidate; do
-        if [[ $candidate == "$current_word"* ]]; then
-            COMPREPLY+=("$candidate")
-        fi
-    done < <(
-        command lazy __complete \
-            --shell bash \
-            --cursor "$cursor" \
-            -- "$@" 2>/dev/null
-    )
-
-    if ((${#COMPREPLY[@]} <= 1)); then
-        return 0
-    fi
-
-    common_prefix=${COMPREPLY[0]}
-    for candidate in "${COMPREPLY[@]:1}"; do
-        while [[ $candidate != "$common_prefix"* ]]; do
-            common_prefix=${common_prefix%?}
-        done
-    done
-    expected_line=${COMP_LINE:0:COMP_POINT-${#current_word}}${common_prefix}${COMP_LINE:COMP_POINT}
-    expected_point=$((COMP_POINT - ${#current_word} + ${#common_prefix}))
-    _LAZYROS_COMPLETION_EXPECTED=$expected_line'|'$expected_point
-    _LAZYROS_COMPLETION_TOKEN_START=$((COMP_POINT - ${#current_word}))
-    _LAZYROS_COMPLETION_PREFIX=$common_prefix
-    _LAZYROS_COMPLETION_CANDIDATES=("${COMPREPLY[@]}")
-    bind -x '"\C-i":_lazyros_second_tab'
-}
-
-_lazyros_complete_lazy()
-{
-    _lazyros_completion_candidates \
-        "$COMP_CWORD" \
-        "${COMP_WORDS[COMP_CWORD]-}" \
-        "${COMP_WORDS[@]}"
-}
-
-_lazyros_complete_direct()
-{
-    local direct_cursor=$((COMP_CWORD + 1))
-    _lazyros_completion_candidates \
-        "$direct_cursor" \
-        "${COMP_WORDS[COMP_CWORD]-}" \
-        lazy "${COMP_WORDS[@]}"
-}
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lazy-completion.bash
+source "${BASH_SOURCE[0]%/*}/lazy-completion.bash"
 
 if type complete >/dev/null 2>&1; then
     complete -o bashdefault -o default -F _lazyros_complete_lazy lazy
@@ -317,6 +213,7 @@ HISTFILE=$LAZYROS_HISTORY_FILE
 HISTSIZE=2000
 HISTFILESIZE=4000
 HISTCONTROL=ignoredups:erasedups
+PROMPT_COMMAND=(_lazyros_completion_reset _lazyros_check_overlay)
 shopt -s histappend
 builtin history -c
 if [[ -f $HISTFILE ]]; then

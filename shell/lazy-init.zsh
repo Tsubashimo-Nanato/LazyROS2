@@ -2,6 +2,9 @@
 
 # This file is sourced from the managed block in ~/.zshrc.
 
+# Keep text after the cursor available as a suffix during completion.
+setopt complete_in_word
+
 lazy()
 {
     if (( $# == 0 )); then
@@ -36,11 +39,11 @@ _lazyros_compadd()
         fi
         compstate[insert]=all
         compstate[list]=''
-        compadd -Q -- "$selected"
+        compadd -- "$selected"
     else
         compstate[insert]=unambiguous
         compstate[list]=''
-        compadd -Q -- "$@"
+        compadd -- "$@"
     fi
 }
 
@@ -53,12 +56,14 @@ _lazyros_completion_observe()
 
 _lazyros_complete_lazy()
 {
-    local -a candidates
+    local -a candidates completion_words
+    completion_words=("${words[@]}")
+    completion_words[CURRENT]=${(Q)PREFIX}
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \
             --cursor "$CURRENT" \
-            -- "${words[@]}" 2>/dev/null
+            -- "${completion_words[@]}" 2>/dev/null
     )}")
 
     if (( ${#candidates[@]} == 0 )); then

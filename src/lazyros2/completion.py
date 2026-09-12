@@ -238,6 +238,7 @@ class CompletionCache:
         colcon_path: str | None,
         *,
         domain: str,
+        overlay_fingerprint: str = "",
     ) -> str:
         if domain not in COMPLETION_CACHE_DOMAINS:
             raise ValueError(f"unknown completion cache domain: {domain}")
@@ -248,6 +249,7 @@ class CompletionCache:
             "colcon": colcon_path or "",
             "ros_distro": env.get("ROS_DISTRO", ""),
             "ament_prefix_path": env.get("AMENT_PREFIX_PATH", ""),
+            "overlay_fingerprint": overlay_fingerprint,
         }
         encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"

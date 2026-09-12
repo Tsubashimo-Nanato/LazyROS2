@@ -317,7 +317,10 @@ def copy_payload(source_root: Path, destination: Path) -> None:
             continue
         target = destination / relative
         if source.is_dir():
-            shutil.copytree(source, target, copy_function=shutil.copy2)
+            shutil.copytree(
+                source, target, copy_function=shutil.copy2,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
         else:
             shutil.copy2(source, target)
 

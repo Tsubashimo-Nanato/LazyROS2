@@ -281,8 +281,11 @@ class CliCommandTests(unittest.TestCase):
         )
         with mock.patch.object(cli, "_workspace", return_value=self.workspace), mock.patch.object(
             cli, "_runtime_environment", return_value={}
-        ), mock.patch.object(cli, "_run", return_value=0) as run:
+        ), mock.patch.object(cli, "_run", return_value=0) as run, mock.patch.object(
+            cli, "_mark_completion_dirty"
+        ) as mark_dirty:
             self.assertEqual(cli._pkg(args), 0)
+        mark_dirty.assert_called_once_with(self.workspace, os.environ)
         self.assertEqual(
             run.call_args.args[0],
             (

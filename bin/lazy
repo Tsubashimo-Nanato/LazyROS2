@@ -16,7 +16,9 @@ else
     export PYTHONPATH="$app_root/src"
 fi
 
-exec python3 -c '
+# Keep the managed payload immutable; ROS subprocesses retain their own Python
+# settings because -B applies only to this interpreter.
+exec python3 -B -c '
 import sys
 if sys.version_info < (3, 10):
     print("lazy: Python 3.10 or newer is required.", file=sys.stderr)
