@@ -134,18 +134,67 @@ class ReadinessIntegrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_saved_baseline_replaces_stale_runtime_overlay_on_each_call(self) -> None:
+    def test_runtime_replaces_only_stale_workspace_paths_on_each_call(self) -> None:
         self.workspace.install.mkdir()
         (self.workspace.install / "local_setup.sh").touch()
         baseline = {"PATH": "/usr/bin", "ROS_DISTRO": "jazzy"}
         baseline_file = self.root / "baseline.json"
         baseline_file.write_text(json.dumps(baseline), encoding="utf-8")
-        inherited = {"LAZYROS_BASELINE_FILE": str(baseline_file), "AMENT_PREFIX_PATH": str(self.workspace.install / "old_pkg")}
+        inherited = {**baseline, "LAZYROS_BASELINE_FILE": str(baseline_file), "AMENT_PREFIX_PATH": str(self.workspace.install / "old_pkg")}
         with mock.patch.object(cli, "capture_overlay_environment", side_effect=[{"NEW": "one"}, {"NEW": "two"}]) as capture:
             self.assertEqual(cli._runtime_environment(self.workspace, inherited), {"NEW": "one"})
             self.assertEqual(cli._runtime_environment(self.workspace, inherited), {"NEW": "two"})
         for call in capture.call_args_list:
-            self.assertEqual(call.args[1], baseline)
+            self.assertEqual(call.args[1], {**inherited, "AMENT_PREFIX_PATH": ""})
+
+    def test_runtime_honors_exports_and_unsets_while_build_keeps_saved_baseline(self) -> None:
+        self.workspace.install.mkdir()
+        (self.workspace.install / "local_setup.sh").touch()
+        saved = {"PATH": "/usr/bin", "ROS_DOMAIN_ID": "0", "ROS_LOCALHOST_ONLY": "1", "HARDWARE_MODE": "old"}
+        baseline_file = self.root / "baseline.json"
+        baseline_file.write_text(json.dumps(saved), encoding="utf-8")
+        current = {
+            "PATH": os.pathsep.join((str(self.root / "new-tools"), str(self.workspace.install / "demo/bin"), "/usr/bin")),
+            "ROS_DOMAIN_ID": "42",
+            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+            "HARDWARE_MODE": "new",
+            "LAZYROS_BASELINE_FILE": str(baseline_file),
+        }
+        with mock.patch.object(cli, "capture_overlay_environment", side_effect=lambda workspace, env, **kwargs: dict(env)) as capture:
+            runtime = cli._runtime_environment(self.workspace, current)
+        self.assertEqual(runtime["ROS_DOMAIN_ID"], "42")
+        self.assertEqual(runtime["RMW_IMPLEMENTATION"], "rmw_cyclonedds_cpp")
+        self.assertEqual(runtime["HARDWARE_MODE"], "new")
+        self.assertNotIn("ROS_LOCALHOST_ONLY", runtime)
+        self.assertEqual(runtime["PATH"], os.pathsep.join((str(self.root / "new-tools"), "/usr/bin")))
+        self.assertEqual(cli._baseline_for_build(self.workspace, current), saved)
+        capture.assert_called_once()
+
+    def test_graph_completion_identity_follows_current_domain_and_middleware(self) -> None:
+        saved = {"ROS_DOMAIN_ID": "0", "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp"}
+        baseline_file = self.root / "baseline.json"
+        baseline_file.write_text(json.dumps(saved), encoding="utf-8")
+
+        def query(argv, *, env, **kwargs):
+            return CommandResult(tuple(argv), 0, f"/domain_{env['ROS_DOMAIN_ID']}\n")
+
+        with mock.patch.dict(os.environ, {**saved, "LAZYROS_BASELINE_FILE": str(baseline_file)}, clear=True), mock.patch.object(
+            cli, "_xdg", return_value=self.paths
+        ), mock.patch.object(cli, "run_command", side_effect=query) as run:
+            first = cli._collect_completion_objects("topic", self.workspace, time.monotonic() + 1.5)
+            os.environ["ROS_DOMAIN_ID"] = "42"
+            second = cli._collect_completion_objects("topic", self.workspace, time.monotonic() + 1.5)
+            os.environ["RMW_IMPLEMENTATION"] = "rmw_cyclonedds_cpp"
+            third = cli._collect_completion_objects("topic", self.workspace, time.monotonic() + 1.5)
+            self.assertEqual(cli._baseline_for_build(self.workspace, os.environ), saved)
+        self.assertEqual((first, second, third), (("/domain_0",), ("/domain_42",), ("/domain_42",)))
+        self.assertEqual(run.call_count, 3)
+
+    def test_standalone_cli_preserves_an_already_sourced_callers_environment(self) -> None:
+        inherited = {"AMENT_PREFIX_PATH": str(self.workspace.install), "ROS_DOMAIN_ID": "42"}
+        with mock.patch.object(cli, "capture_overlay_environment") as capture:
+            self.assertEqual(cli._runtime_environment(self.workspace, inherited), inherited)
+        capture.assert_not_called()
 
     def test_warm_graph_completion_skips_ros_and_overlay_capture(self) -> None:
         result = CommandResult(("ros2", "topic", "list"), 0, "/scan\n/tf\n")

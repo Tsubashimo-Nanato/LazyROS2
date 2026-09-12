@@ -61,6 +61,26 @@ def find_self_overlay(
     return tuple(hits)
 
 
+def without_workspace_overlay(
+    workspace: Workspace,
+    env: Mapping[str, str],
+) -> dict[str, str]:
+    """Keep current exports while removing this workspace's old search paths."""
+    install = workspace.install.resolve(strict=False)
+    current = dict(env)
+    for variable in PREFIX_VARIABLES:
+        if variable not in current:
+            continue
+        kept: list[str] = []
+        for entry in current[variable].split(os.pathsep):
+            candidate = Path(entry).expanduser()
+            if entry and candidate.is_absolute() and _inside(candidate.resolve(strict=False), install):
+                continue
+            kept.append(entry)
+        current[variable] = os.pathsep.join(kept)
+    return current
+
+
 def capture_overlay_environment(
     workspace: Workspace,
     baseline: Mapping[str, str],

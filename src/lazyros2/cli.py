@@ -37,6 +37,7 @@ from lazyros2.environment import (
     capture_overlay_environment,
     find_self_overlay,
     validated_setup_script,
+    without_workspace_overlay,
 )
 from lazyros2.jobs import JobRegistry, JobRegistryError, JobState
 from lazyros2.graph_cache import GraphCache, GraphSnapshot
@@ -216,7 +217,7 @@ def _runtime_environment(
     if not env.get("LAZYROS_BASELINE_FILE") and find_self_overlay(workspace, env):
         return dict(env)
 
-    baseline = _load_baseline(env)
+    baseline = _runtime_base(workspace, env)
     setup = workspace.install / "local_setup.sh"
     if not setup.is_file():
         return baseline
@@ -225,6 +226,14 @@ def _runtime_environment(
         baseline,
         timeout=overlay_timeout,
     )
+
+
+def _runtime_base(workspace: Workspace, env: Mapping[str, str]) -> dict[str, str]:
+    # The saved snapshot belongs to build/test. Runtime follows exports and
+    # unsets made in the current shell, then rebuilds only its workspace paths.
+    if env.get("LAZYROS_BASELINE_FILE"):
+        return without_workspace_overlay(workspace, env)
+    return dict(env)
 
 
 def _mark_completion_dirty(workspace: Workspace, env: Mapping[str, str]) -> None:
@@ -237,7 +246,8 @@ def _mark_completion_dirty(workspace: Workspace, env: Mapping[str, str]) -> None
         return
     for domain in ("packages", "runtime", "launch"):
         try:
-            key = _completion_cache_key(cache, workspace, baseline, domain)
+            selected_env = baseline if domain == "packages" else _runtime_base(workspace, env)
+            key = _completion_cache_key(cache, workspace, selected_env, domain)
             cache.mark_dirty(key)
         except (CompletionError, OSError, TimeoutError):
             continue
@@ -1139,7 +1149,7 @@ def _completion_cache_state(
 ) -> str:
     paths = _xdg(env)
     try:
-        baseline = _load_baseline(env)
+        baseline = _runtime_base(workspace, env)
         cache = CompletionCache(paths.cache / "completion")
         key = _completion_cache_key(cache, workspace, baseline, "runtime")
         snapshot = cache.read(key)
@@ -1189,9 +1199,14 @@ def _completion_cache_context(
     deadline: float | None = None,
 ) -> tuple[dict[str, str], CompletionCache, str]:
     paths = _xdg()
-    # Cache lookup uses the saved baseline and file stamps. Sourcing an overlay
+    # Cache lookup uses current exports and file stamps. Sourcing an overlay
     # belongs inside the collector; otherwise every warm Tab starts another shell.
-    selected_env = _load_baseline(os.environ) if env is None else dict(env)
+    if env is not None:
+        selected_env = dict(env)
+    elif domain == "packages":
+        selected_env = _load_baseline(os.environ)
+    else:
+        selected_env = _runtime_base(workspace, os.environ)
     cache = CompletionCache(paths.cache / "completion")
     key = _completion_cache_key(
         cache,
@@ -1476,7 +1491,7 @@ def _graph_snapshot(
     runtime: Mapping[str, str] | None = None,
     raw_lines: bool = False,
 ) -> GraphSnapshot:
-    identity_env = _load_baseline(os.environ)
+    identity_env = _runtime_base(workspace, os.environ)
     cache = GraphCache(_xdg().completion / "graph")
     key = cache.key(
         domain,
