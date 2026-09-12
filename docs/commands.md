@@ -9,7 +9,7 @@ cd ~/robot_ws
 lazy
 ```
 
-A directory with `src/` is accepted, including an empty workspace. Other layouts are accepted when `colcon list` discovers packages. Interactive startup also finds the nearest ancestor with a `src/` directory. It does not run a recursive colcon search over parent directories.
+A directory with `src/` is accepted, including an empty workspace. Other layouts are accepted when `colcon list` discovers packages. Interactive startup also finds the nearest ancestor with a `src/` directory, skipping package directories identified by `package.xml`. It does not run a recursive colcon search over parent directories.
 
 When no workspace is found, startup offers to create `src/` after confirmation or choose another existing directory. Directory input supports Tab; an empty answer, EOF, or Ctrl+C cancels. Existing files and dangling symlinks at `src` are not replaced. Noninteractive startup reports an actionable error without prompting.
 

@@ -226,6 +226,9 @@ class ControllerOnboardingTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.cwd = self.root / "robot_ws"
         self.cwd.mkdir()
+        previous_directory = Path.cwd()
+        self.addCleanup(os.chdir, previous_directory)
+        os.chdir(self.cwd)
         self.paths = XdgPaths(
             config=self.root / "config",
             state=self.root / "state",
@@ -235,9 +238,6 @@ class ControllerOnboardingTests(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(mock.patch.dict(os.environ, {"SHELL": "/bin/bash"}, clear=True))
-        self.current_directory = self.stack.enter_context(
-            mock.patch.object(cli.os, "getcwd", return_value=str(self.cwd))
-        )
         self.stack.enter_context(mock.patch("sys.stdin.isatty", return_value=True))
         self.stack.enter_context(mock.patch.object(cli, "_workspace_probe", return_value=()))
         self.stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
@@ -254,7 +254,7 @@ class ControllerOnboardingTests(unittest.TestCase):
     def test_child_directory_starts_controller_at_nearest_workspace(self) -> None:
         child = self.cwd / "src" / "robot_base"
         child.mkdir(parents=True)
-        self.current_directory.return_value = str(child)
+        os.chdir(child)
         with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")), mock.patch.object(
             cli, "_xdg", return_value=self.paths
         ), mock.patch.object(cli, "_start_interactive_shell", return_value=17) as start:
@@ -282,7 +282,7 @@ class ControllerOnboardingTests(unittest.TestCase):
         (package / "package.xml").write_text("<package/>", encoding="utf-8")
         for directory in (package, descendant):
             with self.subTest(directory=directory):
-                self.current_directory.return_value = str(directory)
+                os.chdir(directory)
                 with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")), mock.patch.object(
                     cli, "_xdg", return_value=self.paths
                 ), mock.patch.object(cli, "_start_interactive_shell", return_value=0) as start:

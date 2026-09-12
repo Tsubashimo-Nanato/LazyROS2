@@ -19,6 +19,16 @@ from lazyros2.onboarding import select_workspace  # noqa: E402
 from lazyros2.paths import Workspace, WorkspaceError  # noqa: E402
 
 
+@contextlib.contextmanager
+def working_directory(path: Path):
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def main() -> int:
     if shutil.which("colcon") is None:
         raise SystemExit("onboarding smoke requires an existing colcon installation")
@@ -38,11 +48,14 @@ def main() -> int:
                 pass
             else:
                 raise AssertionError("empty directory unexpectedly accepted as workspace")
-            with mock.patch.object(cli.os, "getcwd", return_value=str(candidate)), mock.patch(
+            with working_directory(candidate), mock.patch(
                 "sys.stdin.isatty", return_value=True
-            ), mock.patch("builtins.input", return_value="q"), contextlib.redirect_stderr(io.StringIO()):
+            ), mock.patch("builtins.input", return_value="q") as prompt, mock.patch.object(
+                cli, "_xdg", side_effect=AssertionError("cancelled startup reached runtime setup")
+            ), contextlib.redirect_stderr(io.StringIO()):
                 if cli.main([]) != 0:
                     raise AssertionError("cancelled startup did not return success")
+                prompt.assert_called_once()
         if list(candidate.iterdir()) or set(root.iterdir()) != {candidate}:
             raise AssertionError("workspace discovery or cancellation wrote files")
         workspace = root / "robot_ws"
@@ -66,8 +79,9 @@ def main() -> int:
             if tuple(cli._workspace_probe(workspace)) != ("lazy_onboarding_cpp",):
                 raise AssertionError("real colcon did not recognize the C++ package fixture")
             for directory in (package, descendant):
-                if select_workspace(directory, cli._workspace_probe).root != workspace:
-                    raise AssertionError(f"package-local src was mistaken for a workspace: {directory}")
+                with working_directory(directory):
+                    if select_workspace(Path.cwd(), cli._workspace_probe).root != workspace:
+                        raise AssertionError(f"package-local src was mistaken for a workspace: {directory}")
         if (root / "unexpected-logs").exists() or (workspace / "log").exists():
             raise AssertionError("C++ workspace discovery wrote log files")
     print("Real-colcon onboarding smoke passed; cancellation is clean and C++ package boundaries are correct.")
