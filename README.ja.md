@@ -20,6 +20,8 @@ sh install.sh
 
 新しいターミナルを開き、`lazy version` で確認してください。インストールはユーザー単位で、sudo も実行時の PyPI 依存関係も不要です。`lazy uninstall` で削除でき、`--purge` を付けると設定と履歴も削除できます。
 
+使用済みの v0.2 から更新する場合は、先に[旧バイトコードの移行に関する注意](docs/validation-2026-09-12.md#upgrading-an-existing-v020-installation)を確認してください。
+
 ダウンロードからインストールまでの簡略化は [#18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) で進めています。オフライン利用、更新、復旧については[インストールガイド](docs/install-layout.md)を参照してください。
 
 ## 使い始める

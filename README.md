@@ -20,6 +20,8 @@ sh install.sh
 
 Open a new terminal, then run `lazy version`. Installation is per-user, without sudo or runtime PyPI dependencies. To remove it, run `lazy uninstall`; add `--purge` to also remove settings and history.
 
+Upgrading a used v0.2 install? Read the [bytecode migration caveat](docs/validation-2026-09-12.md#upgrading-an-existing-v020-installation) first.
+
 The complete download-and-install flow is still being simplified in [#18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18). See the [install guide](docs/install-layout.md) for offline use, upgrades, and recovery.
 
 ## Start working

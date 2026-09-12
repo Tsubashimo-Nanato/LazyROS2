@@ -20,6 +20,8 @@ sh install.sh
 
 重新打开终端，运行 `lazy version` 验证。安装仅面向当前用户，无需 sudo，也没有运行时 PyPI 依赖。卸载使用 `lazy uninstall`；加上 `--purge` 可同时清除配置和历史。
 
+从使用过的 v0.2 升级前，请先查看[旧字节码迁移提醒](docs/validation-2026-09-12.md#upgrading-an-existing-v020-installation)。
+
 完整的下载与安装流程仍在 [#18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18) 中继续简化。离线安装、升级和恢复说明见[安装指南](docs/install-layout.md)。
 
 ## 开始工作

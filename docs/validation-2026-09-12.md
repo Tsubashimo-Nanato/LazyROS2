@@ -26,13 +26,23 @@ The [CI workflow](../.github/workflows/ci.yml) runs on Ubuntu 24.04 hosts with p
 
 The ROS fixture checks selected-build failure without its dependency, up-to/all builds, tests/results, run/launch, package/executable/launch completion, package creation and cache invalidation, updated installed executables, duplicate launch-basename rejection, and live graph discovery. Its synthetic graph node never publishes messages and is stopped in `finally`.
 
-The initial stability run passed all three Python and ROS environments plus GNOME Terminal. Its ShellCheck warnings were corrected before the next run. Final check links and counts will be recorded before the candidate is tagged.
+The [stability CI run](https://github.com/Tsubashimo-Nanato/LazyROS2/actions/runs/34676980806) passed all nine checks. Its quality job ran **189 tests with no skips**; the Python matrix ran the same discovery with 30 no-zsh skips each. Earlier ShellCheck warnings and zsh mid-word completion failures were fixed before this passing run.
+
+The combined onboarding candidate passes local discovery: **210 tests, 74 platform skips** on Windows. That is not Linux runtime proof; the candidate's Linux and real-colcon onboarding checks must pass before tagging.
 
 ## Completion latency
 
 The first ROS run measured repeated separate-process graph completion p95 at **104.1 ms (Humble), 117.9 ms (Jazzy), and 124.5 ms (Lyrical)**. These include launcher/Python startup and may include a TTL refresh; they are not an isolated cache-lookup benchmark. Tests separately verify that fresh hits do not spawn ROS discovery or source the overlay.
 
 The 100 ms target is not yet demonstrated across supported environments. [Issue #25](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/25) stays open for that remaining acceptance criterion. A cold graph query has a 1.5-second collection budget; failure retains an older snapshot when available.
+
+## Upgrading an existing v0.2.0 installation
+
+Normal use of v0.2.0 may have created Python bytecode that is not recorded in its install manifest. The installer correctly refuses to replace a tree with untracked files, but this also blocks those upgrades. The new payload prevents further bytecode writes; automatic migration of old files remains [#33](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/33).
+
+If the installer reports only untracked bytecode, close old Lazy windows and move **only the reported untracked entries** to a backup outside `~/.local/lib/lazyros2`. Rerun the new `sh install.sh` without starting the old version in between. Keep the backup. Do not edit the manifest or blindly remove whole `__pycache__` directories: some old manifests may already track part of their contents. Unexpected files need inspection, not forced deletion.
+
+Uninstalling the old version first is not a reliable shortcut: untracked files can remain after its manifest is removed. This historical migration has not had a full old-tag installed-upgrade Linux test in this run; the new-payload lifecycle has.
 
 ## Boundaries and remaining work
 
