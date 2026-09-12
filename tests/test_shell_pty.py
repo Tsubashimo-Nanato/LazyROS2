@@ -545,7 +545,6 @@ esac
         script = ROOT / "shell" / f"lazy-{integration}.zsh"
         (zdotdir / ".zshrc").write_text(
             f"source {shlex.quote(str(script))}\n"
-            "setopt complete_in_word\n"
             "PROMPT='ZCOMP> '\n"
             "RPROMPT=\n",
             encoding="utf-8",
@@ -882,12 +881,26 @@ class LiteralCompletionPtyTests(unittest.TestCase):
         fake_bin.mkdir()
         candidate_file = root / "candidates"
         candidate_file.write_text("\n".join(candidates) + "\n", encoding="utf-8")
+        completion_script = root / "complete.py"
+        completion_script.write_text(
+            "import os, pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "shell = args[args.index('--shell') + 1]\n"
+            "cursor = int(args[args.index('--cursor') + 1]) - (shell == 'zsh')\n"
+            "words = args[args.index('--') + 1:]\n"
+            "prefix = words[cursor] if cursor < len(words) else ''\n"
+            "candidates = pathlib.Path(os.environ['LAZYROS_TEST_CANDIDATES']).read_text(encoding='utf-8').splitlines()\n"
+            "for candidate in candidates:\n"
+            "    if candidate.startswith(prefix):\n"
+            "        print(candidate)\n",
+            encoding="utf-8",
+        )
         lazy = fake_bin / "lazy"
         lazy.write_text(
             """#!/bin/sh
 case ${1-} in
     __setup-path) exit 0 ;;
-    __complete) cat "$LAZYROS_TEST_CANDIDATES" ;;
+    __complete) exec "$LAZYROS_TEST_PYTHON" "$LAZYROS_TEST_COMPLETE" "$@" ;;
     __select)
         PYTHONPATH="$LAZYROS_TEST_SOURCE" \
             exec "$LAZYROS_TEST_PYTHON" -m lazyros2 "$@"
@@ -910,6 +923,7 @@ esac
             LAZYROS_HISTORY_FILE=str(root / "history"),
             LAZYROS_WORKSPACE=str(workspace),
             LAZYROS_TEST_CANDIDATES=str(candidate_file),
+            LAZYROS_TEST_COMPLETE=str(completion_script),
             LAZYROS_TEST_SOURCE=str(ROOT / "src"),
             LAZYROS_TEST_PYTHON=sys.executable,
         )
@@ -999,19 +1013,20 @@ esac
 
     def test_cursor_completion_preserves_suffix_and_following_argument(self) -> None:
         for shell_name in ("bash", "zsh"):
-            for multiple in (False, True):
-                with self.subTest(shell=shell_name, multiple=multiple):
-                    candidates = ("map one.rviz", "map two.rviz") if multiple else ("map one.rviz",)
-                    with tempfile.TemporaryDirectory() as temp:
-                        with self._spawn(Path(temp), shell_name, "control", candidates) as child:
-                            child.send(b"lazy rviz map.rviz trailing\x01" + b"\x1b[C" * 13 + b"\t")
-                            child.read_for(0.2)
-                            if multiple:
-                                child.send(b"\t")
-                                child.expect(b"[1/2]")
+            for integration in ("init", "control"):
+                for multiple in (False, True):
+                    with self.subTest(shell=shell_name, integration=integration, multiple=multiple):
+                        candidates = ("map one.rviz", "map two.rviz") if multiple else ("map one.rviz",)
+                        with tempfile.TemporaryDirectory() as temp:
+                            with self._spawn(Path(temp), shell_name, integration, candidates) as child:
+                                child.send(b"lazy rviz map.rviz trailing\x01" + b"\x1b[C" * 13 + b"\t")
+                                child.read_for(0.2)
+                                if multiple:
+                                    child.send(b"\t")
+                                    child.expect(b"[1/2]")
+                                    child.send(b"\r")
                                 child.send(b"\r")
-                            child.send(b"\r")
-                            self._expect_argv(child, "rviz", candidates[0], "trailing")
+                                self._expect_argv(child, "rviz", candidates[0], "trailing")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,9 @@
 
 # Source this file from the isolated ZDOTDIR/.zshrc created by the CLI.
 
+# Keep text after the cursor available as a suffix during completion.
+setopt complete_in_word
+
 if [[ -z ${LAZYROS_WORKSPACE:-} || $LAZYROS_WORKSPACE != /* ]]; then
     print -u2 -r -- 'lazy: LAZYROS_WORKSPACE must be an absolute path.'
     return 2
@@ -149,12 +152,14 @@ _lazyros_completion_observe()
 
 _lazyros_complete_lazy()
 {
-    local -a candidates
+    local -a candidates completion_words
+    completion_words=("${words[@]}")
+    completion_words[CURRENT]=${(Q)PREFIX}
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \
             --cursor "$CURRENT" \
-            -- "${words[@]}" 2>/dev/null
+            -- "${completion_words[@]}" 2>/dev/null
     )}")
 
     if (( ${#candidates[@]} == 0 )); then
@@ -170,6 +175,7 @@ _lazyros_complete_direct()
     local direct_cursor=$((CURRENT + 1))
     local -a direct_words candidates
     direct_words=(lazy "${words[@]}")
+    direct_words[direct_cursor]=${(Q)PREFIX}
     candidates=("${(@f)$(
         command lazy __complete \
             --shell zsh \
