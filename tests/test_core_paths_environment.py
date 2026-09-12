@@ -140,6 +140,26 @@ class OverlayEnvironmentTests(unittest.TestCase):
                     {"AMENT_PREFIX_PATH": str(workspace.install)},
                 )
 
+    @unittest.skipIf(os.name == "nt", "overlay setup scripts require bash semantics")
+    def test_rejects_partial_environment_when_setup_returns_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "src").mkdir()
+            (root / "install").mkdir()
+            (root / "install" / "local_setup.sh").write_text(
+                "export LAZYROS2_PARTIAL=unusable\n"
+                "printf 'dependency setup failed\\n' >&2\n"
+                "return 7\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                OverlayEnvironmentError, r"exit 7.*dependency setup failed"
+            ):
+                capture_overlay_environment(
+                    Workspace.open(root), {"PATH": os.environ["PATH"]}
+                )
+
     def test_rejects_setup_symlink_escaping_install_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

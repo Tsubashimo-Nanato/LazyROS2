@@ -14,12 +14,30 @@ fi
 
 _lazyros_reload_overlay()
 {
-    local setup_file=
+    local setup_file= generation=
+    if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
+        IFS= read -r generation < "$LAZYROS_OVERLAY_GENERATION_FILE"
+    fi
 
     setup_file=$(command lazy __setup-path --shell zsh) || return $?
-    [[ -n $setup_file ]] || return 0
+    if [[ -n $setup_file ]]; then
+        source "$setup_file" || return $?
+    fi
+    _LAZYROS_OVERLAY_GENERATION=$generation
+}
 
-    source "$setup_file"
+_lazyros_check_overlay()
+{
+    local previous_status=$? generation=
+    if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
+        IFS= read -r generation < "$LAZYROS_OVERLAY_GENERATION_FILE"
+    fi
+    if [[ -n $generation && $generation != "${_LAZYROS_OVERLAY_GENERATION:-}" ]]; then
+        if ! _lazyros_reload_overlay; then
+            print -u2 -r -- "lazy: failed to load workspace overlay: $LAZYROS_WORKSPACE/install"
+        fi
+    fi
+    return "$previous_status"
 }
 
 build() { command lazy build "$@"; }
@@ -114,11 +132,11 @@ _lazyros_compadd()
         fi
         compstate[insert]=all
         compstate[list]=''
-        compadd -Q -- "$selected"
+        compadd -- "$selected"
     else
         compstate[insert]=unambiguous
         compstate[list]=''
-        compadd -Q -- "$@"
+        compadd -- "$@"
     fi
 }
 
@@ -181,6 +199,7 @@ HISTFILE=$LAZYROS_HISTORY_FILE
 HISTSIZE=2000
 SAVEHIST=2000
 setopt append_history hist_ignore_all_dups
+precmd_functions+=(_lazyros_check_overlay)
 fc -p "$HISTFILE"
 
 _lazyros_workspace_label=${LAZYROS_WORKSPACE:t}

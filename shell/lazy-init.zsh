@@ -36,11 +36,11 @@ _lazyros_compadd()
         fi
         compstate[insert]=all
         compstate[list]=''
-        compadd -Q -- "$selected"
+        compadd -- "$selected"
     else
         compstate[insert]=unambiguous
         compstate[list]=''
-        compadd -Q -- "$@"
+        compadd -- "$@"
     fi
 }
 

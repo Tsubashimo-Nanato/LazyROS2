@@ -25,7 +25,7 @@ def test_managed_init_preserves_external_launcher() -> None:
 
 def test_launcher_uses_one_python_process_and_does_not_read_code_from_stdin() -> None:
     launcher = (ROOT / "bin" / "lazy").read_text(encoding="utf-8")
-    assert launcher.count("exec python3 -c") == 1
+    assert launcher.count("exec python3 -B -c") == 1
     assert "python3 -m lazyros2" not in launcher
     assert "runpy.run_module" in launcher
 
@@ -39,15 +39,17 @@ def test_completion_uses_cli_protocol_without_eval() -> None:
         assert not re.search(r"(^|\s)eval(\s|$)", script, flags=re.MULTILINE)
 
     for name in (
-        "lazy-init.bash",
+        "lazy-completion.bash",
         "lazy-init.zsh",
-        "lazy-control.bash",
         "lazy-control.zsh",
     ):
         script = read_shell(name)
         assert "command lazy __complete" in script
         assert "--cursor" in script
         assert '2>/dev/null' in script
+
+    for name in ("lazy-init.bash", "lazy-control.bash"):
+        assert 'source "${BASH_SOURCE[0]%/*}/lazy-completion.bash"' in read_shell(name)
 
 
 def test_zsh_double_tab_is_scoped_to_lazy_completion_state() -> None:

@@ -178,6 +178,9 @@ class JobRegistry:
             if prune:
                 kept = [record for record in records if not _is_stale(record)]
                 if len(kept) != len(records):
+                    for record in records:
+                        if record not in kept:
+                            self.baseline_path(record.workspace, record.number).unlink(missing_ok=True)
                     raw_state["jobs"] = [record.to_json() for record in kept]
                     atomic_write_json(self.path, raw_state)
                 records = kept
@@ -201,6 +204,13 @@ class JobRegistry:
             if len(raw_state["jobs"]) == before:
                 raise JobRegistryError(f"task not found: {workspace_path} #{number}")
             atomic_write_json(self.path, raw_state)
+            self.baseline_path(workspace_path, number).unlink(missing_ok=True)
+
+    def baseline_path(self, workspace: Path | str, number: int) -> Path:
+        """A task owns its clean environment independently of the control shell."""
+        if type(number) is not int or number <= 0:
+            raise ValueError("task number must be a positive integer")
+        return self.runtime_dir / "task-baselines" / f"{_job_id(_workspace_path(workspace), number)}.json"
 
     def has_active_jobs(self) -> bool:
         return bool(self.list())

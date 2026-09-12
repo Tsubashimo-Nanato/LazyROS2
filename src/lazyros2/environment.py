@@ -89,7 +89,7 @@ def capture_overlay_environment(
         "--noprofile",
         "--norc",
         "-c",
-        'set -a\n. "$1" >/dev/null\ncommand -p env -0',
+        'set -a\n. "$1" >/dev/null || exit $?\ncommand -p env -0',
         "lazyros2-overlay",
         str(setup),
     )

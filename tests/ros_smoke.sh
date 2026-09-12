@@ -123,6 +123,14 @@ grep -F 'lazy-app-v1 launched' <<<"$launch_output"
 "$lazy" __complete --shell bash --cursor 3 -- lazy run lazy_app "" | grep -Fx hello
 "$lazy" __complete --shell bash --cursor 3 -- lazy launch lazy_app "" | grep -Fx smoke.launch.py
 
+# Creating a package must invalidate a warm workspace cache immediately.
+"$lazy" pkg create lazy_generated cpp lazy_dep
+"$lazy" __complete --shell bash --cursor 2 -- lazy build "" | grep -Fx lazy_generated
+"$lazy" build up-to lazy_generated
+"$lazy" test lazy_generated
+"$lazy" run lazy_app | grep -F 'lazy-app-v1'
+python3 "$repository/tests/graph_smoke.py" "$lazy"
+
 sed -i 's/lazy-app-v1/lazy-app-v2/' "$workspace/src/lazy_app/scripts/hello"
 "$lazy" build lazy_app
 "$lazy" run lazy_app hello | grep -F 'lazy-app-v2'
