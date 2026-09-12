@@ -4,7 +4,7 @@
 # first Tab: Readline's filename quoting depends on the user's shell settings.
 _lazyros_completion_token()
 {
-    local line=$1 point=$2 character next quote= escaped=0 index start=0
+    local line=$1 point=$2 character next quote='' escaped=0 index start=0
     _LAZYROS_TOKEN_VALUE=
     for ((index = 0; index < ${#line}; index++)); do
         character=${line:index:1}

@@ -15,9 +15,9 @@ fi
 
 _lazyros_reload_overlay()
 {
-    local setup_file= generation=
+    local setup_file='' generation=''
     if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
-        IFS= read -r generation < "$LAZYROS_OVERLAY_GENERATION_FILE"
+        IFS= read -r generation <"$LAZYROS_OVERLAY_GENERATION_FILE"
     fi
 
     setup_file=$(command lazy __setup-path --shell bash) || return $?
@@ -33,7 +33,7 @@ _lazyros_check_overlay()
 {
     local previous_status=$? generation=
     if [[ -r ${LAZYROS_OVERLAY_GENERATION_FILE:-} ]]; then
-        IFS= read -r generation < "$LAZYROS_OVERLAY_GENERATION_FILE"
+        IFS= read -r generation <"$LAZYROS_OVERLAY_GENERATION_FILE"
     fi
     if [[ -n $generation && $generation != "${_LAZYROS_OVERLAY_GENERATION:-}" ]]; then
         if ! _lazyros_reload_overlay; then
