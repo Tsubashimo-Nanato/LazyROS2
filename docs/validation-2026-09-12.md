@@ -1,6 +1,6 @@
 # Initial-usability validation — 2026-09-12
 
-This milestone keeps the existing command surface and focuses on the ordinary development loop: install, choose a workspace, complete a command, build/test, run/launch, restart a task, and uninstall. Historical `v0.1.0` and `v0.2.0` tags are unchanged; the candidate version is `0.3.0`.
+This milestone keeps the existing command surface and focuses on the ordinary development loop: install, choose a workspace, complete a command, build/test, run/launch, restart a task, and uninstall. Historical `v0.1.0` and `v0.2.0` tags are unchanged; this version is `0.3.0`.
 
 ## Changes under test
 
@@ -28,7 +28,9 @@ The ROS fixture checks selected-build failure without its dependency, up-to/all 
 
 The [stability CI run](https://github.com/Tsubashimo-Nanato/LazyROS2/actions/runs/34676980806) passed all nine checks. Its quality job ran **189 tests with no skips**; the Python matrix ran the same discovery with 30 no-zsh skips each. Earlier ShellCheck warnings and zsh mid-word completion failures were fixed before this passing run.
 
-The combined onboarding candidate passes local discovery: **210 tests, 74 platform skips** on Windows. That is not Linux runtime proof; the candidate's Linux and real-colcon onboarding checks must pass before tagging.
+The [combined onboarding CI run](https://github.com/Tsubashimo-Nanato/LazyROS2/actions/runs/34677419834), at commit `b24b8bc`, also passed all nine checks. It includes the real-colcon cancellation/C++ workspace fixture in all three ROS environments and Python 3.10, 3.12 and 3.14. An earlier Python 3.10 test-fixture issue was fixed by using actual temporary working directories instead of mocking `getcwd`; the cancellation test now verifies that its prompt is reached and runtime setup is not.
+
+Local combined discovery ran **214 tests, 74 platform skips** on Windows. These local skips are why Linux CI, rather than the local result alone, is the merge gate. The final PR and exact-main required checks remain the tag gate; this report records the tested code before its documentation-only finalization.
 
 ## Completion latency
 
