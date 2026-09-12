@@ -15,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lazyros2 import cli  # noqa: E402
+from lazyros2.onboarding import select_workspace  # noqa: E402
 from lazyros2.paths import Workspace, WorkspaceError  # noqa: E402
 
 
@@ -44,7 +45,32 @@ def main() -> int:
                     raise AssertionError("cancelled startup did not return success")
         if list(candidate.iterdir()) or set(root.iterdir()) != {candidate}:
             raise AssertionError("workspace discovery or cancellation wrote files")
-    print("Real-colcon onboarding smoke passed; cancellation left no files.")
+        workspace = root / "robot_ws"
+        package = workspace / "src" / "lazy_onboarding_cpp"
+        descendant = package / "src" / "planner"
+        descendant.mkdir(parents=True)
+        (package / "package.xml").write_text(
+            '<package format="3"><name>lazy_onboarding_cpp</name><version>0.0.1</version>'
+            '<description>Workspace discovery fixture</description>'
+            '<maintainer email="test@example.com">LazyROS2</maintainer>'
+            '<license>Apache-2.0</license><buildtool_depend>ament_cmake</buildtool_depend>'
+            '<export><build_type>ament_cmake</build_type></export></package>',
+            encoding="utf-8",
+        )
+        (package / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.8)\nproject(lazy_onboarding_cpp)\n"
+            "find_package(ament_cmake REQUIRED)\nament_package()\n",
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, environment, clear=True):
+            if tuple(cli._workspace_probe(workspace)) != ("lazy_onboarding_cpp",):
+                raise AssertionError("real colcon did not recognize the C++ package fixture")
+            for directory in (package, descendant):
+                if select_workspace(directory, cli._workspace_probe).root != workspace:
+                    raise AssertionError(f"package-local src was mistaken for a workspace: {directory}")
+        if (root / "unexpected-logs").exists() or (workspace / "log").exists():
+            raise AssertionError("C++ workspace discovery wrote log files")
+    print("Real-colcon onboarding smoke passed; cancellation is clean and C++ package boundaries are correct.")
     return 0
 
 

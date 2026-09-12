@@ -61,6 +61,22 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(workspace.root, self.cwd)
         self.probe.assert_called_once_with(self.cwd)
 
+    def test_cpp_package_source_directory_does_not_replace_enclosing_workspace(self) -> None:
+        package = self.cwd / "src" / "navigation"
+        descendant = package / "src" / "planner"
+        descendant.mkdir(parents=True)
+        (package / "package.xml").write_text("<package/>", encoding="utf-8")
+        for directory in (package, descendant):
+            with self.subTest(directory=directory):
+                self.assertEqual(select_workspace(directory, self.probe).root, self.cwd)
+        self.probe.assert_not_called()
+
+    def test_standalone_package_keeps_explicit_nonstandard_fallback(self) -> None:
+        (self.cwd / "src").mkdir()
+        (self.cwd / "package.xml").write_text("<package/>", encoding="utf-8")
+        self.assertEqual(select_workspace(self.cwd, self.probe).root, self.cwd)
+        self.probe.assert_not_called()
+
     def test_native_workspace_probes_disable_logs_without_mutating_caller_environment(self) -> None:
         original_log_path = str(self.root / "user-logs")
         with mock.patch.dict(os.environ, {"COLCON_LOG_PATH": original_log_path}), mock.patch.object(
@@ -258,6 +274,31 @@ class ControllerOnboardingTests(unittest.TestCase):
         ) as start:
             self.assertEqual(cli.main([]), 0)
         self.assertEqual(start.call_args.args[2]["LAZYROS_WORKSPACE"], str(bound))
+
+    def test_controller_started_inside_cpp_package_keeps_the_enclosing_workspace(self) -> None:
+        package = self.cwd / "src" / "navigation"
+        descendant = package / "src" / "planner"
+        descendant.mkdir(parents=True)
+        (package / "package.xml").write_text("<package/>", encoding="utf-8")
+        for directory in (package, descendant):
+            with self.subTest(directory=directory):
+                self.current_directory.return_value = str(directory)
+                with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")), mock.patch.object(
+                    cli, "_xdg", return_value=self.paths
+                ), mock.patch.object(cli, "_start_interactive_shell", return_value=0) as start:
+                    self.assertEqual(cli.main([]), 0)
+                self.assertEqual(start.call_args.args[2]["LAZYROS_WORKSPACE"], str(self.cwd))
+
+    def test_explicit_cpp_package_binding_still_takes_precedence(self) -> None:
+        package = self.cwd / "src" / "navigation"
+        (package / "src").mkdir(parents=True)
+        (package / "package.xml").write_text("<package/>", encoding="utf-8")
+        os.environ["LAZYROS_WORKSPACE"] = str(package)
+        with mock.patch.object(cli, "_xdg", return_value=self.paths), mock.patch.object(
+            cli, "_start_interactive_shell", return_value=0
+        ) as start:
+            self.assertEqual(cli.main([]), 0)
+        self.assertEqual(start.call_args.args[2]["LAZYROS_WORKSPACE"], str(package))
 
     def test_invalid_explicit_binding_does_not_switch_to_ancestor_or_prompt(self) -> None:
         child = self.cwd / "src" / "robot_base"

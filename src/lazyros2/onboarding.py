@@ -14,9 +14,10 @@ def _find_workspace(path: Path, package_probe: PackageProbe | None) -> Workspace
     if not path.is_dir():
         raise WorkspaceError(f"workspace directory does not exist: {path}")
     # Ancestor package probes can recursively scan an entire home or filesystem.
-    # Only explicit src markers establish an ancestor workspace boundary.
+    # C++ packages also have src/, so package.xml excludes their local source
+    # directory from the ancestor workspace markers.
     for candidate in (path, *path.parents):
-        if (candidate / "src").is_dir():
+        if (candidate / "src").is_dir() and not (candidate / "package.xml").exists():
             return Workspace.open(candidate, package_probe=package_probe)
     return Workspace.open(path, package_probe=package_probe)
 
