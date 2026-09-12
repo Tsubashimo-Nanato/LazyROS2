@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Until the first stable release, security fixes are provided for the latest published `0.1.x` release only. Development snapshots are not supported security releases.
+Before version 1.0, security fixes target the latest tagged version. Older tags and development snapshots do not receive separate security maintenance. A Git tag does not imply that a GitHub Release archive has been published.
 
 ## Reporting a vulnerability
 

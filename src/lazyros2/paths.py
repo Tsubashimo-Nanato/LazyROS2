@@ -142,6 +142,8 @@ def _default_package_probe(root: Path) -> Sequence[str]:
     result = run_command(
         ("colcon", "list", "--names-only", "--base-paths", str(root)),
         cwd=root,
+        # Keep workspace inspection read-only, including colcon's own logging.
+        env={**os.environ, "COLCON_LOG_PATH": os.devnull},
         timeout=2.0,
         capture_output=True,
     )

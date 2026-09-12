@@ -1,102 +1,82 @@
-<p align="right"><a href="./README.zh-CN.md">简体中文</a></p>
+<p align="right">English / <a href="./README.ja.md">日本語</a> / <a href="./README.zh-CN.md">简体中文</a></p>
 
 # LazyROS2
 
 > A workspace-aware shell for everyday ROS 2 development.
 
-## Description
-
-LazyROS2 turns common `colcon`, `ros2 run`, `ros2 launch`, and RViz workflows into short, discoverable commands with context-aware completion.
+Build a package, find an executable with Tab, and keep each task in its own numbered, color-coded window. LazyROS2 gives common `colcon` and `ros2` workflows short, discoverable commands.
 
 ROS 2 remembers every option. Humans should not have to.
 
-```console
-$ cd ~/robot_ws
-$ lazy
-[lazy:robot_ws | ros:jazzy] $ build navigation_bringup
-[lazy:robot_ws | ros:jazzy] $ launch navigation_bringup navigation.launch.py
-```
-
-LazyROS2 does not replace `ros2` or `colcon`. Native commands remain available whenever the wrapper should politely step aside.
-
-## Highlights
-
-- Complete workspace packages, executables, launch files, RViz configs, graph objects, bags, and jobs.
-- Build one package without retyping long selection flags.
-- Run ROS processes in numbered, color-coded task windows.
-- Press Ctrl+C, then Up and Enter to start a task again.
-- Keep build environments separate from runtime overlays.
-- Install and uninstall without sudo or runtime PyPI dependencies.
-
-## Multiple workspaces
-
-Each LazyROS2 instance binds to the workspace where it starts. Open another terminal to work in another workspace:
-
-```sh
-cd ~/robot_a_ws && lazy
-cd ~/robot_b_ws && lazy
-```
-
-Both instances may run at the same time. Their completion caches, histories, task lists, colors, and overlays stay separate.
-
-LazyROS2 does not currently stack multiple overlays inside one instance. One instance, one workspace—fewer surprises, and considerably fewer haunted terminals.
-
 ## Install
 
+You need Linux, Python 3.10+, Bash or zsh, and an existing ROS 2 environment. Builds need `colcon`; graphical task windows need a desktop session and a supported terminal.
+
 ```sh
-git clone --branch v0.2.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
+git clone --branch v0.3.0 --depth 1 https://github.com/Tsubashimo-Nanato/LazyROS2.git
 cd LazyROS2
 sh install.sh
 ```
 
-Open a new terminal after installation. LazyROS2 never installs or modifies ROS 2. The first-time installation flow is being simplified further in [Issue #18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18); verification, custom rc handling, upgrade, and recovery details live in the [install guide](docs/install-layout.md).
+Open a new terminal, then run `lazy version`. Installation is per-user, without sudo or runtime PyPI dependencies. To remove it, run `lazy uninstall`; add `--purge` to also remove settings and history.
 
-## Daily workflow
+The complete download-and-install flow is still being simplified in [#18](https://github.com/Tsubashimo-Nanato/LazyROS2/issues/18). See the [install guide](docs/install-layout.md) for offline use, upgrades, and recovery.
+
+## Start working
+
+Load your ROS underlay as usual—for example, `source /opt/ros/jazzy/setup.bash` in Bash—then:
 
 ```console
 $ cd ~/robot_ws
 $ lazy
 [lazy:robot_ws | ros:jazzy] $ build my_robot
-[lazy:robot_ws | ros:jazzy] $ build up-to navigation_bringup
-[lazy:robot_ws | ros:jazzy] $ test my_robot
 [lazy:robot_ws | ros:jazzy] $ run my_robot controller
-[lazy:robot_ws | ros:jazzy] $ launch my_robot bringup.launch.py
-[lazy:robot_ws | ros:jazzy] $ rviz config/navigation.rviz
 [lazy:robot_ws | ros:jazzy] $ jobs
-[lazy:robot_ws | ros:jazzy] $ topic
 ```
 
-Use `help COMMAND` for exact syntax. Build, test, run, launch, RViz, live graph views, and jobs use persistent task windows from the control shell. Press Tab once to complete a prefix; press it again to choose with the arrow keys.
+An existing workspace opens immediately. Starting inside its `src/` tree finds the workspace above it. Outside a workspace, interactive startup can create `src/` after confirmation or let you choose another directory with path completion.
 
-For scripts and CI, skip the control shell:
+LazyROS2 inherits your exported ROS/hardware environment; it does not load those setup scripts for you. Start from a terminal that has **not** sourced this workspace's `install/`. Lazy keeps that clean build baseline and loads the workspace overlay for runtime commands.
+
+## Fewer flags, familiar commands
+
+Inside the control shell, omit `lazy`:
+
+| Lazy command | Native operation |
+| --- | --- |
+| `build my_robot` | `colcon build --packages-select my_robot` |
+| `build up-to my_robot` | `colcon build --packages-up-to my_robot` |
+| `test my_robot` | Selected tests, then `colcon test-result --verbose` |
+| `run my_robot controller` | `ros2 run my_robot controller` |
+| `launch my_robot bringup.launch.py` | `ros2 launch my_robot bringup.launch.py` |
+| `rviz config/navigation.rviz` | `rviz2 -d config/navigation.rviz` |
+| `topic echo /scan` | `ros2 topic echo /scan` |
+| `pkg create sensors cpp rclcpp` | Create an `ament_cmake` package under `src/` |
+
+Press Tab once for a unique match or common prefix, then again for the arrow-key selector. Packages, executables, launch files, paths, and ROS graph objects complete in context. Graph snapshots are reused for three seconds; cold ROS queries have a 1.5-second budget and failures retain stale results.
+
+Build, test, run, launch, and RViz open persistent task windows. Ctrl+C returns to the task prompt; Up and Enter rerun the command. Each restart reads the latest overlay. After a successful build, the control shell reloads it at the next prompt—press Enter if it is already waiting. Task windows remain usable after you exit the control shell.
+
+For SSH, scripts, or CI, commands run in the current terminal:
 
 ```sh
 lazy build my_robot
 lazy run my_robot controller
+lazy topic echo /scan
 ```
 
-## Support
+Native `ros2` and `colcon` remain available. See `help COMMAND` and the [command reference](docs/commands.md) for the full surface and current limits.
 
-| Platform | ROS 2 | Python | Status |
-| --- | --- | --- | --- |
-| Ubuntu 22.04 | Humble | 3.10 | Supported |
-| Ubuntu 24.04 | Jazzy | 3.12 | Supported |
-| Ubuntu 26.04 | Lyrical | 3.14 | Supported |
-| Fedora 44 | Jazzy with micromamba | Distribution environment | Experimental |
+## Multiple workspaces
 
-Bash and zsh are supported on x86_64. arm64 is best-effort and smoke-tested on Ubuntu 22.04 with ROS 2 Humble. Windows, macOS, PowerShell, and multi-overlay stacks are outside the v0.2 scope.
+Open separate terminals and run `lazy` in `~/robot_a_ws` and `~/robot_b_ws`. Each instance stays bound to its workspace even after `cd`; histories, overlays, caches, settings, and task views remain separate. One instance manages one workspace, without a multi-overlay stack.
 
-## Documentation
+## Support and verification
 
-- [Command reference](docs/commands.md)
-- [Install and uninstall](docs/install-layout.md)
-- [Validation matrix](docs/validation.md)
-- [Jetson Humble smoke report](docs/jetson-humble-smoke-2026-07-11.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
+The CI targets are Ubuntu 22.04/Humble, 24.04/Jazzy, and 26.04/Lyrical with Python 3.10, 3.12, and 3.14. Bash and zsh are supported on x86_64; GNOME Terminal is the primary graphical adapter.
 
-## License
+Fedora/Jazzy with micromamba and other terminal adapters are experimental. arm64 is best-effort, with [historical Jetson testing](docs/jetson-humble-smoke-2026-07-11.md). Windows, macOS, and PowerShell are not supported runtimes.
 
-Copyright © 2026 Tsubashimo-Nanato.
+[Current validation](docs/validation-2026-09-12.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-LazyROS2 is licensed under [AGPL-3.0-or-later](LICENSE), without warranty.
+Copyright © 2026 Tsubashimo-Nanato. [AGPL-3.0-or-later](LICENSE), without warranty.
