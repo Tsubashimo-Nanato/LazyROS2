@@ -41,6 +41,7 @@ from lazyros2.environment import (
 )
 from lazyros2.jobs import JobRegistry, JobRegistryError, JobState
 from lazyros2.graph_cache import GraphCache, GraphSnapshot
+from lazyros2.onboarding import select_workspace
 from lazyros2.paths import Workspace, WorkspaceError, XdgPaths
 from lazyros2.process import normalize_returncode, run_command
 from lazyros2.storage import ensure_private_directory
@@ -118,7 +119,8 @@ def _workspace_probe(root: Path, *, timeout: float = 2.0) -> Sequence[str]:
     result = run_command(
         ("colcon", "list", "--base-paths", str(root), "--names-only"),
         cwd=root,
-        env=os.environ,
+        # Discovery must not create log/ before a user cancels workspace setup.
+        env={**os.environ, "COLCON_LOG_PATH": os.devnull},
         timeout=timeout,
         capture_output=True,
     )
@@ -598,7 +600,12 @@ def _launcher_argv() -> tuple[str, ...]:
 
 
 def _start_controller(shell_name: str) -> int:
-    workspace = _workspace()
+    if "LAZYROS_WORKSPACE" in os.environ:
+        workspace = _workspace()
+    else:
+        workspace = select_workspace(Path.cwd(), package_probe=_workspace_probe)
+        if workspace is None:
+            return 0
     hits = find_self_overlay(workspace, os.environ)
     if hits:
         details = ", ".join(f"{hit.variable}={hit.path}" for hit in hits)

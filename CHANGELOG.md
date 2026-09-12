@@ -4,6 +4,25 @@ All notable changes to LazyROS2 are documented here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-12
+
+### Added
+
+- Interactive workspace startup with ancestor discovery, confirmed `src/` creation, and directory selection with path completion.
+- A shared three-second ROS graph cache for completion and live lists, preserving stale snapshots when collection fails.
+- A Japanese README and an English command reference alongside the Chinese quick start.
+
+### Fixed
+
+- Reload the control-shell overlay at its next prompt after a successful task-window build.
+- Keep task-window baselines available for restarts after the controller exits.
+- Quote shell-sensitive completion candidates consistently in Bash and zsh.
+- Reuse warm run/launch completion without sourcing the workspace again, and invalidate package completion after package creation.
+- Preserve failures from workspace setup scripts instead of continuing with a partial environment.
+- Honor current runtime exports, including ROS domain and middleware changes, while keeping the build baseline unchanged.
+- Prevent Lazy's bytecode files from interfering with managed reinstall and uninstall; exclude development bytecode from the payload.
+- Replace deprecated GitHub Actions runtime revisions with verified Node.js 24 pins.
+
 ## [0.2.0] - 2026-07-11
 
 ### Added
@@ -32,6 +51,7 @@ All notable changes to LazyROS2 are documented here. The format follows [Keep a 
 - Transactional single-user installer, manifest schema v1, verified uninstall, and optional state purge.
 - Required CI and an explicitly dispatched annotated-tag release workflow for versioned tar archives, SHA-256 sums, and provenance attestation.
 
-[Unreleased]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/releases/tag/v0.1.0
+[0.1.0]: https://github.com/Tsubashimo-Nanato/LazyROS2/tree/v0.1.0

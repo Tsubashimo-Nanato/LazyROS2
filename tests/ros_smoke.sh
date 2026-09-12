@@ -23,6 +23,8 @@ set -u
 export PYTHONPATH="$repository/src${PYTHONPATH:+:$PYTHONPATH}"
 lazy="$repository/bin/lazy"
 
+python3 "$repository/tests/onboarding_smoke.py"
+
 mkdir -p \
     "$workspace/src/lazy_dep" \
     "$workspace/src/lazy_app/scripts" \
